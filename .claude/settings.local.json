@@ -4,7 +4,12 @@
       "Bash(./gradlew build:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(javap:*)",
-      "Bash(jar -xf:*)"
+      "Bash(jar -xf:*)",
+      "Bash(./gradlew run:*)",
+      "Bash(./gradlew listMaps:*)",
+      "Bash(for map in DefaultSmall DefaultMedium DefaultLarge)",
+      "Bash(do echo \"=== Testing $map ===\")",
+      "Bash(done)"
     ]
   }
 }

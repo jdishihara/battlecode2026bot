@@ -11,12 +11,15 @@ import java.util.Random;
 public class RobotPlayer {
 
     // ===== CONSTANTS & CONFIGURATION =====
-    static final int INITIAL_RATS = 6;
-    static final int CARRY_LIMIT = 20;
-    static final int LOW_CHEESE_THRESHOLD = 800;
+    static final int INITIAL_RATS = 5; // Reduced to save cheese
+    static final int CARRY_LIMIT = 20; // Max cheese per trip
+    static final int LOW_CHEESE_THRESHOLD = 1500; // Higher threshold for spawning
+    static final int CRITICAL_CHEESE_THRESHOLD = 300; // Stop spawning below this
     static final int CAT_FLEE_RADIUS = 12;
     static final int DELIVERY_RADIUS = 1;
-    static final int SPAWN_INTERVAL = 3; // Spawn every N rounds when cheese is low
+    static final int SPAWN_INTERVAL = 6; // Spawn rarely - very conservative
+    static final int MAX_TARGET_PURSUIT_TURNS = 30; // Fast target switching
+    static final int STUCK_THRESHOLD = 3; // Get unstuck quickly
 
     // Shared array indices
     static final int KING_X_INDEX = 0;
@@ -44,6 +47,10 @@ public class RobotPlayer {
     static MapLocation mapCenter = null; // Center of the map
     static MapLocation explorationTarget = null; // Current exploration target
     static boolean hasReachedCenter = false; // Track if we've been to center
+    static Direction explorationDirection = null; // Unique exploration direction per rat
+    static MapLocation[] recentLocations = new MapLocation[5]; // Track last 5 locations
+    static int recentLocationIndex = 0; // Index for circular buffer
+    static int turnsAtTarget = 0; // How long we've been pursuing current target
 
     static final Direction[] directions = {
         Direction.NORTH,
@@ -93,24 +100,32 @@ public class RobotPlayer {
     static void runRatKing(RobotController rc) throws GameActionException {
         MapLocation myLocation = rc.getLocation();
         int globalCheese = rc.getGlobalCheese();
+        int spawnCost = rc.getCurrentRatCost();
 
         // Broadcast king location and cheese state
         rc.writeSharedArray(KING_X_INDEX, myLocation.x);
         rc.writeSharedArray(KING_Y_INDEX, myLocation.y);
         rc.writeSharedArray(CHEESE_STATE_INDEX, globalCheese < LOW_CHEESE_THRESHOLD ? 0 : 1);
 
-        // Spawning logic - try all adjacent locations
-        if (turnCount <= 5) {
-            // Spawn initial rats (up to 6)
+        // Spawning logic - conservative to preserve cheese
+        int minCheeseForSpawn = spawnCost + 100; // Keep 100 cheese buffer
+
+        // Always spawn initial rats
+        if (turnCount <= 5 && globalCheese >= minCheeseForSpawn) {
             trySpawnRat(rc);
-        } else if (globalCheese < LOW_CHEESE_THRESHOLD) {
-            // Spawn one rat every few rounds when cheese is low
-            if (turnCount % SPAWN_INTERVAL == 0) {
-                trySpawnRat(rc);
-            }
+        }
+        // Only spawn more rats when we have good reserves AND cheese income
+        else if (globalCheese > LOW_CHEESE_THRESHOLD &&
+                 globalCheese >= minCheeseForSpawn &&
+                 turnCount % SPAWN_INTERVAL == 0) {
+            trySpawnRat(rc);
+        }
+        // Emergency: never spawn if critically low
+        else if (globalCheese < CRITICAL_CHEESE_THRESHOLD) {
+            // Don't spawn, focus on survival
         }
 
-        rc.setIndicatorString("King | Cheese: " + globalCheese);
+        rc.setIndicatorString("King | Cheese: " + globalCheese + " | Cost: " + spawnCost);
     }
 
     /**
@@ -136,17 +151,24 @@ public class RobotPlayer {
      * Baby Rat: runs state machine to collect and deliver cheese.
      */
     static void runBabyRat(RobotController rc) throws GameActionException {
-        // Initialize map center on first turn
+        // Initialize map center and exploration direction on first turn
         if (mapCenter == null) {
             int mapWidth = rc.getMapWidth();
             int mapHeight = rc.getMapHeight();
             mapCenter = new MapLocation(mapWidth / 2, mapHeight / 2);
+
+            // Assign unique exploration direction based on robot ID
+            int dirIndex = rc.getID() % 8;
+            explorationDirection = directions[dirIndex];
         }
 
         // Update king location from shared array
         int kingX = rc.readSharedArray(KING_X_INDEX);
         int kingY = rc.readSharedArray(KING_Y_INDEX);
         kingLocation = new MapLocation(kingX, kingY);
+
+        // Track recent locations for stuck detection
+        updateRecentLocations(rc.getLocation());
 
         // Handle traffic control (forced move away after delivery)
         if (moveAwayCounter > 0) {
@@ -209,6 +231,7 @@ public class RobotPlayer {
         if (rc.getRawCheese() > 0) {
             currentState = RatState.RETURN;
             stuckCounter = 0;
+            turnsAtTarget = 0;
             return;
         }
 
@@ -221,53 +244,58 @@ public class RobotPlayer {
         if (nearestCheese != null) {
             currentState = RatState.COLLECT;
             stuckCounter = 0;
+            turnsAtTarget = 0;
             return;
         }
 
         // Look for cheese mines in vision (cheese spawns near mines)
         MapLocation nearestMine = findNearestCheeseMine(rc, nearby);
 
-        // Check if stuck (same location as last turn)
-        if (lastLocation != null && currentLocation.equals(lastLocation)) {
+        // Advanced stuck detection - check if we're oscillating or trapped
+        if (isStuckInLoop()) {
             stuckCounter++;
         } else {
             stuckCounter = 0;
         }
 
-        // If stuck for 3+ turns, pick a new random direction and clear target
-        if (stuckCounter >= 3) {
-            Direction randomDir = directions[rng.nextInt(8)];
-            if (rc.canTurn(randomDir)) {
-                rc.turn(randomDir);
-            }
+        // If stuck for threshold turns, do aggressive unstuck maneuver
+        if (stuckCounter >= STUCK_THRESHOLD) {
+            performUnstuckManeuver(rc);
             explorationTarget = null;
+            turnsAtTarget = 0;
             stuckCounter = 0;
-            lastLocation = currentLocation;
             return;
         }
 
         lastLocation = currentLocation;
+        turnsAtTarget++;
 
-        // Determine exploration target
+        // Determine exploration target with better persistence
         MapLocation target = null;
 
         // Priority 1: Move toward nearby cheese mine
         if (nearestMine != null) {
             target = nearestMine;
+            turnsAtTarget = 0; // Reset when we find a new priority target
         }
-        // Priority 2: If not reached center yet, head there
-        else if (!hasReachedCenter && mapCenter != null) {
+        // Priority 2: Head toward center initially (cheese mines likely there)
+        else if (!hasReachedCenter && mapCenter != null && turnCount < 80) {
             target = mapCenter;
-            // Check if we've reached the center
-            if (currentLocation.distanceSquaredTo(mapCenter) <= 25) {
+            // Check if we've reached near the center or spent enough time
+            if (currentLocation.distanceSquaredTo(mapCenter) <= 35 || turnsAtTarget > 20) {
                 hasReachedCenter = true;
+                turnsAtTarget = 0;
             }
         }
-        // Priority 3: Explore systematically - move in a spiral or to edges
+        // Priority 3: Systematic exploration with persistence
         else {
-            // Set exploration target if we don't have one
-            if (explorationTarget == null || currentLocation.distanceSquaredTo(explorationTarget) <= 4) {
+            // Only pick a new target if we don't have one, reached it, or pursued too long without progress
+            if (explorationTarget == null ||
+                currentLocation.distanceSquaredTo(explorationTarget) <= 4 ||
+                turnsAtTarget > MAX_TARGET_PURSUIT_TURNS) {
+
                 explorationTarget = pickNewExplorationTarget(rc);
+                turnsAtTarget = 0;
             }
             target = explorationTarget;
         }
@@ -276,18 +304,90 @@ public class RobotPlayer {
         if (target != null) {
             intelligentMoveToward(rc, target, nearby);
         } else {
-            // Fallback: just move forward
-            if (rc.canMoveForward()) {
-                rc.moveForward();
-            } else {
-                // Turn when blocked
-                Direction currentDir = rc.getDirection();
-                Direction newDir = (rc.getID() % 2 == 0) ? currentDir.rotateLeft() : currentDir.rotateRight();
-                if (rc.canTurn(newDir)) {
-                    rc.turn(newDir);
+            // Fallback: explore in assigned direction
+            exploreInDirection(rc, explorationDirection);
+        }
+    }
+
+    /**
+     * Check if rat is stuck in a loop by analyzing recent positions.
+     */
+    static boolean isStuckInLoop() {
+        if (recentLocations[0] == null) return false;
+
+        // Check if we're oscillating between same few positions
+        int uniquePositions = 0;
+        for (int i = 0; i < recentLocations.length; i++) {
+            if (recentLocations[i] == null) continue;
+
+            boolean isUnique = true;
+            for (int j = 0; j < i; j++) {
+                if (recentLocations[j] != null && recentLocations[j].equals(recentLocations[i])) {
+                    isUnique = false;
+                    break;
                 }
             }
+            if (isUnique) uniquePositions++;
         }
+
+        // If we've only been in 2 or fewer positions in last 5 turns, we're stuck
+        return uniquePositions <= 2;
+    }
+
+    /**
+     * Perform aggressive maneuver to get unstuck.
+     */
+    static void performUnstuckManeuver(RobotController rc) throws GameActionException {
+        // Try turning 90 degrees and moving
+        Direction currentDir = rc.getDirection();
+        Direction newDir = (rng.nextBoolean()) ?
+            currentDir.rotateLeft().rotateLeft() :
+            currentDir.rotateRight().rotateRight();
+
+        if (rc.canTurn(newDir)) {
+            rc.turn(newDir);
+        }
+
+        // Try to move in multiple directions aggressively
+        for (int i = 0; i < 3; i++) {
+            if (rc.canMoveForward()) {
+                rc.moveForward();
+                return;
+            }
+            Direction tryDir = directions[rng.nextInt(8)];
+            if (rc.canTurn(tryDir)) {
+                rc.turn(tryDir);
+            }
+        }
+    }
+
+    /**
+     * Explore by moving in a specific direction (sweep pattern).
+     */
+    static void exploreInDirection(RobotController rc, Direction dir) throws GameActionException {
+        if (rc.getDirection() != dir && rc.canTurn(dir)) {
+            rc.turn(dir);
+        } else if (rc.canMoveForward()) {
+            rc.moveForward();
+        } else {
+            // Blocked, try to go around obstacle
+            Direction left = dir.rotateLeft();
+            Direction right = dir.rotateRight();
+
+            if (rc.canTurn(left)) {
+                rc.turn(left);
+            } else if (rc.canTurn(right)) {
+                rc.turn(right);
+            }
+        }
+    }
+
+    /**
+     * Update the circular buffer of recent locations.
+     */
+    static void updateRecentLocations(MapLocation loc) {
+        recentLocations[recentLocationIndex] = loc;
+        recentLocationIndex = (recentLocationIndex + 1) % recentLocations.length;
     }
 
     /**
@@ -312,26 +412,67 @@ public class RobotPlayer {
     }
 
     /**
-     * Pick a new exploration target away from current location.
+     * Pick a new exploration target to ensure thorough map coverage.
      */
     static MapLocation pickNewExplorationTarget(RobotController rc) {
         MapLocation myLocation = rc.getLocation();
         int mapWidth = rc.getMapWidth();
         int mapHeight = rc.getMapHeight();
 
-        // Pick a random target in a quadrant away from current location
+        // Use robot ID to assign different exploration strategies
+        int strategy = (rc.getID() / 2) % 4;
+
         int targetX, targetY;
 
-        if (myLocation.x < mapWidth / 2) {
-            targetX = mapWidth * 3 / 4 + rng.nextInt(mapWidth / 4);
-        } else {
-            targetX = rng.nextInt(mapWidth / 4);
-        }
+        switch (strategy) {
+            case 0: // Explore corners
+                boolean topHalf = myLocation.y > mapHeight / 2;
+                boolean leftHalf = myLocation.x < mapWidth / 2;
 
-        if (myLocation.y < mapHeight / 2) {
-            targetY = mapHeight * 3 / 4 + rng.nextInt(mapHeight / 4);
-        } else {
-            targetY = rng.nextInt(mapHeight / 4);
+                if (topHalf && leftHalf) {
+                    targetX = mapWidth - 5;
+                    targetY = mapHeight - 5;
+                } else if (topHalf) {
+                    targetX = 5;
+                    targetY = mapHeight - 5;
+                } else if (leftHalf) {
+                    targetX = mapWidth - 5;
+                    targetY = 5;
+                } else {
+                    targetX = 5;
+                    targetY = 5;
+                }
+                break;
+
+            case 1: // Explore horizontal sweep
+                targetX = (myLocation.x > mapWidth / 2) ? 5 : mapWidth - 5;
+                targetY = myLocation.y + (rng.nextBoolean() ? 10 : -10);
+                targetY = Math.max(5, Math.min(mapHeight - 5, targetY));
+                break;
+
+            case 2: // Explore vertical sweep
+                targetX = myLocation.x + (rng.nextBoolean() ? 10 : -10);
+                targetX = Math.max(5, Math.min(mapWidth - 5, targetX));
+                targetY = (myLocation.y > mapHeight / 2) ? 5 : mapHeight - 5;
+                break;
+
+            case 3: // Diagonal exploration
+            default:
+                // Move toward unexplored diagonal quadrants
+                if (myLocation.x < mapWidth / 2 && myLocation.y < mapHeight / 2) {
+                    targetX = mapWidth * 3 / 4;
+                    targetY = mapHeight * 3 / 4;
+                } else if (myLocation.x >= mapWidth / 2 && myLocation.y < mapHeight / 2) {
+                    targetX = mapWidth / 4;
+                    targetY = mapHeight * 3 / 4;
+                } else if (myLocation.x < mapWidth / 2) {
+                    targetX = mapWidth * 3 / 4;
+                    targetY = mapHeight / 4;
+                } else {
+                    targetX = mapWidth / 4;
+                    targetY = mapHeight / 4;
+                }
+                break;
         }
 
         return new MapLocation(targetX, targetY);
