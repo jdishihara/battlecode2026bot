@@ -9,7 +9,7 @@ import java.util.Random;
  * - Rat King: spawns baby rats and attacks nearby enemies
  * - Baby Rats: move randomly, attack enemies, and pickup cheese
  */
-public class RobotPlayer {
+public class testbot {
 
     static int turnCount = 0;
     static Random rng;
