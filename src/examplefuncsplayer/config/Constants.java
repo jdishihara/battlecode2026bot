@@ -30,6 +30,7 @@ public final class Constants {
     public static final int ATTACKER_VISION_RADIUS = 20;
     public static final int MAX_STALE_TARGET_TURNS = 50;
     public static final int BITE_CHEESE_BOOST = 10;
+    public static final int ENEMY_KING_SQUEAK_MESSAGE = 999; // Signal for enemy king found
 
     // Defensive constants
     public static final int MIN_DEFENDERS_NEAR_KING = 5;

@@ -10,12 +10,15 @@ import static examplefuncsplayer.config.Constants.*;
 import static examplefuncsplayer.config.Shared.*;
 
 /**
- * ATTACKER baby rat: seeks enemy king, bites when adjacent, runs limited cat flee.
+ * ATTACKER baby rat: seeks enemy king, bites when adjacent, runs limited cat
+ * flee.
  * Uses per-robot memory (keyed by rc.getID()) to avoid static state collisions.
  */
 public class BabyRatAttacker {
 
-    enum AttackState { SEEK, ATTACK, GUARD }
+    enum AttackState {
+        SEEK, ATTACK, GUARD
+    }
 
     static class Mem {
         MapLocation kingLocation = null;
@@ -38,6 +41,7 @@ public class BabyRatAttacker {
         boolean hasReachedCenter = false;
 
         final Random rng;
+
         Mem(int id) {
             rng = new Random(9001L + id * 97L);
             bugLeft = ((id / 2) % 2 == 0);
@@ -45,6 +49,7 @@ public class BabyRatAttacker {
     }
 
     private static final Map<Integer, Mem> MEM = new HashMap<>();
+
     private static Mem mem(RobotController rc) {
         int id = rc.getID();
         Mem m = MEM.get(id);
@@ -66,19 +71,42 @@ public class BabyRatAttacker {
         // read our king
         int kx = rc.readSharedArray(KING_X_INDEX);
         int ky = rc.readSharedArray(KING_Y_INDEX);
-        if (kx != 0 || ky != 0) m.kingLocation = new MapLocation(kx, ky);
-        
-        RobotInfo nearbyEnemyRatNearKing = findNearbyEnemyRatNearKing(rc, m);
-        if (nearbyEnemyRatNearKing != null) {
-            m.state = AttackState.GUARD;
-            m.targetKingLoc = nearbyEnemyRatNearKing.getLocation();
+        if (kx != 0 || ky != 0)
+            m.kingLocation = new MapLocation(kx, ky);
+
+        // READ SQUEAKS: check if any ally found enemy king
+        Message[] squeaks = rc.readSqueaks(-1); // -1 gets all messages from past 5 rounds
+                                                // :contentReference[oaicite:2]{index=2}
+
+        for (Message squeak : squeaks) {
+            if (squeak.getBytes() == ENEMY_KING_SQUEAK_MESSAGE) { // payload :contentReference[oaicite:3]{index=3}
+
+                int senderId = squeak.getSenderID();
+                if (rc.canSenseRobot(senderId)) {
+                    RobotInfo sender = rc.senseRobot(senderId);
+                    if (sender.team != rc.getTeam())
+                        continue;
+                }
+
+                // Another rat found the enemy king!
+                m.targetKingLoc = squeak.getSource();
+                m.turnsSinceKingSeen = 0;
+                m.state = AttackState.ATTACK;
+                break;
+            }
         }
 
-        // flee only when cat very close
+        // FLEE CATS FIRST - highest priority!
         if (shouldAttackerFlee(rc)) {
             runAttackerFlee(rc);
             rc.setIndicatorString("ATTACKER FLEE | " + m.state);
             return;
+        }
+
+        RobotInfo nearbyEnemyRatNearKing = findNearbyEnemyRatNearKing(rc, m);
+        if (nearbyEnemyRatNearKing != null) {
+            m.state = AttackState.GUARD;
+            m.targetKingLoc = nearbyEnemyRatNearKing.getLocation();
         }
 
         // find enemy king
@@ -87,6 +115,12 @@ public class BabyRatAttacker {
             m.targetKingLoc = enemyKing.getLocation();
             m.turnsSinceKingSeen = 0;
             m.state = AttackState.ATTACK;
+
+            // SQUEAK TO ALERT ALL NEARBY RATS!
+            if (rc.isActionReady()) { // :contentReference[oaicite:2]{index=2}
+                rc.squeak(ENEMY_KING_SQUEAK_MESSAGE); // :contentReference[oaicite:3]{index=3}
+            }
+
         } else {
             m.turnsSinceKingSeen++;
             if (m.targetKingLoc != null && m.turnsSinceKingSeen > MAX_STALE_TARGET_TURNS) {
@@ -96,14 +130,18 @@ public class BabyRatAttacker {
         }
 
         switch (m.state) {
-            case SEEK:   runSeek(rc, m); break;
-            case ATTACK: runAttack(rc, m); break;
-            case GUARD:  runGuard(rc, m); break;
-
+            case SEEK:
+                runSeek(rc, m);
+                break;
+            case ATTACK:
+                runAttack(rc, m);
+                break;
+            case GUARD:
+                runGuard(rc, m);
+                break;
         }
 
         rc.setIndicatorString("ATTACKER " + m.state +
-                (m.bugging ? " BUG" + (m.bugLeft ? "L" : "R") : "") +
                 " | Target: " + (m.targetKingLoc != null ? m.targetKingLoc : "none") +
                 " | Fails: " + m.failedMoves);
     }
@@ -150,19 +188,20 @@ public class BabyRatAttacker {
 
         attackerMoveToward(rc, m, m.targetKingLoc);
     }
+
     static void runGuard(RobotController rc, Mem m) throws GameActionException {
         MapLocation here = rc.getLocation();
 
-        //Find and attack nearby enemy rats
+        // Find and attack nearby enemy rats
 
         RobotInfo[] enemies = rc.senseNearbyRobots(20, rc.getTeam().opponent());
         RobotInfo closestEnemy = null;
         int closestDist = Integer.MAX_VALUE;
 
-        for (RobotInfo enemy : enemies){
-            if (enemy.getType() == UnitType.BABY_RAT){
+        for (RobotInfo enemy : enemies) {
+            if (enemy.getType() == UnitType.BABY_RAT) {
                 int dist = here.distanceSquaredTo(enemy.getLocation());
-                if (dist < closestDist){
+                if (dist < closestDist) {
                     closestDist = dist;
                     closestEnemy = enemy;
                 }
@@ -174,7 +213,7 @@ public class BabyRatAttacker {
                 rc.attack(closestEnemy.getLocation(), spend);
                 return;
             }
-            
+
             // Move toward enemy to attack
             attackerMoveToward(rc, m, closestEnemy.getLocation());
             return;
@@ -191,19 +230,24 @@ public class BabyRatAttacker {
 
     static boolean shouldAttackerFlee(RobotController rc) throws GameActionException {
         RobotInfo[] nearby = rc.senseNearbyRobots(ATTACKER_CAT_FLEE_RADIUS);
-        for (RobotInfo r : nearby) if (r.getType() == UnitType.CAT) return true;
+        for (RobotInfo r : nearby)
+            if (r.getType() == UnitType.CAT)
+                return true;
         return false;
     }
 
     static void runAttackerFlee(RobotController rc) throws GameActionException {
         RobotInfo nearestCat = getNearestCat(rc, ATTACKER_CAT_FLEE_RADIUS);
-        if (nearestCat == null) return;
+        if (nearestCat == null)
+            return;
 
         MapLocation here = rc.getLocation();
         Direction away = here.directionTo(nearestCat.getLocation()).opposite();
 
-        if (rc.getDirection() != away && rc.canTurn(away)) rc.turn(away);
-        if (rc.canMoveForward()) rc.moveForward();
+        if (rc.getDirection() != away && rc.canTurn(away))
+            rc.turn(away);
+        if (rc.canMoveForward())
+            rc.moveForward();
     }
 
     static RobotInfo getNearestCat(RobotController rc, int radius) throws GameActionException {
@@ -214,9 +258,13 @@ public class BabyRatAttacker {
         int bestD = Integer.MAX_VALUE;
 
         for (RobotInfo r : nearby) {
-            if (r.getType() != UnitType.CAT) continue;
+            if (r.getType() != UnitType.CAT)
+                continue;
             int d = here.distanceSquaredTo(r.getLocation());
-            if (d < bestD) { bestD = d; best = r; }
+            if (d < bestD) {
+                bestD = d;
+                best = r;
+            }
         }
         return best;
     }
@@ -232,17 +280,22 @@ public class BabyRatAttacker {
         for (RobotInfo r : nearby) {
             if (r.getType() == UnitType.RAT_KING && r.getTeam() == enemy) {
                 int d = here.distanceSquaredTo(r.getLocation());
-                if (d < bestD) { bestD = d; best = r; }
+                if (d < bestD) {
+                    bestD = d;
+                    best = r;
+                }
             }
         }
         return best;
     }
+
     static RobotInfo findNearbyEnemyRatNearKing(RobotController rc, Mem m) throws GameActionException {
-        if (m.kingLocation == null) return null;
-        
+        if (m.kingLocation == null)
+            return null;
+
         RobotInfo[] nearby = rc.senseNearbyRobots(ATTACKER_VISION_RADIUS);
         Team enemy = rc.getTeam().opponent();
-        
+
         for (RobotInfo r : nearby) {
             if (r.getTeam() == enemy && r.getType() == UnitType.BABY_RAT) {
                 // Check if enemy is near our king
@@ -262,138 +315,232 @@ public class BabyRatAttacker {
         int h = rc.getMapHeight();
         MapLocation here = rc.getLocation();
 
-        // head toward center first
-        if (!m.hasReachedCenter && m.mapCenter != null && here.distanceSquaredTo(m.mapCenter) > 100) {
-            return m.mapCenter;
-        }
-        m.hasReachedCenter = true;
-
-        // assume enemy king roughly symmetric to ours
+        // Calculate symmetric positions of our king (where enemy king likely is)
         if (m.kingLocation != null) {
-            int ex = w - 1 - m.kingLocation.x;
-            int ey = h - 1 - m.kingLocation.y;
+            int ratID = rc.getID();
 
-            int offX = m.rng.nextInt(11) - 5;
-            int offY = m.rng.nextInt(11) - 5;
+            // Different rats try different symmetries to spread out
+            int symmetryType = ratID % 3;
+            MapLocation baseTarget;
 
-            ex = Math.max(3, Math.min(w - 4, ex + offX));
-            ey = Math.max(3, Math.min(h - 4, ey + offY));
+            if (symmetryType == 0) {
+                // Rotational symmetry
+                baseTarget = new MapLocation(w - 1 - m.kingLocation.x, h - 1 - m.kingLocation.y);
+            } else if (symmetryType == 1) {
+                // Horizontal flip
+                baseTarget = new MapLocation(w - 1 - m.kingLocation.x, m.kingLocation.y);
+            } else {
+                // Vertical flip
+                baseTarget = new MapLocation(m.kingLocation.x, h - 1 - m.kingLocation.y);
+            }
 
-            return new MapLocation(ex, ey);
+            // Add LARGE random offset to really spread rats out
+            int offX = m.rng.nextInt(21) - 10; // -10 to +10
+            int offY = m.rng.nextInt(21) - 10; // -10 to +10
+
+            int tx = Math.max(5, Math.min(w - 6, baseTarget.x + offX));
+            int ty = Math.max(5, Math.min(h - 6, baseTarget.y + offY));
+
+            return new MapLocation(tx, ty);
         }
 
-        // fallback: opposite corner from our current position
-        int tx = (here.x < w / 2) ? w - 5 : 5;
-        int ty = (here.y < h / 2) ? h - 5 : 5;
+        // Fallback: head to opposite side of map
+        int tx = (here.x < w / 2) ? (int) (w * 0.8) : (int) (w * 0.2);
+        int ty = (here.y < h / 2) ? (int) (h * 0.8) : (int) (h * 0.2);
         return new MapLocation(tx, ty);
     }
 
-    // ===== ATTACKER NAV (BUG + anti-oscillation + avoid occupied tiles) =====
+    // ===== IMPROVED NAVIGATION WITH DIRT DIGGING =====
 
     static boolean attackerMoveToward(RobotController rc, Mem m, MapLocation target) throws GameActionException {
-        if (target == null) return false;
+        if (target == null)
+            return false;
 
         MapLocation here = rc.getLocation();
+        if (here.distanceSquaredTo(target) <= 2)
+            return false;
+
         Direction desired = here.directionTo(target);
-        if (desired == Direction.CENTER) return false;
+        if (desired == Direction.CENTER)
+            return false;
 
-        if (!m.bugging) {
-            Direction[] tryDirs = {
-                    desired,
-                    desired.rotateLeft(),
-                    desired.rotateRight(),
-                    desired.rotateLeft().rotateLeft(),
-                    desired.rotateRight().rotateRight()
-            };
+        // Priority list: try directions closer to target first
+        Direction[] tryDirs = {
+                desired,
+                desired.rotateLeft(),
+                desired.rotateRight(),
+                desired.rotateLeft().rotateLeft(),
+                desired.rotateRight().rotateRight(),
+                desired.rotateLeft().rotateLeft().rotateLeft(),
+                desired.rotateRight().rotateRight().rotateRight(),
+                desired.opposite()
+        };
 
-            for (Direction d : tryDirs) {
-                if (tryMoveDirAvoidRecent(rc, m, d, here)) {
-                    m.failedMoves = 0;
-                    return true;
-                }
+        // Try to move in best available direction
+        MapLocation bestMove = null;
+        Direction bestDir = null;
+        int bestDist = Integer.MAX_VALUE;
+
+        for (Direction dir : tryDirs) {
+            if (dir == null || dir == Direction.CENTER)
+                continue;
+
+            MapLocation next = here.add(dir);
+
+            // Skip if off map
+            if (!rc.onTheMap(next))
+                continue;
+
+            // Anti-oscillation: don't return to recent positions
+            if ((m.prev1 != null && next.equals(m.prev1)) ||
+                    (m.prev2 != null && next.equals(m.prev2))) {
+                continue;
             }
 
-            m.failedMoves++;
-            if (m.failedMoves >= 2) {
-                m.bugging = true;
-                m.bugTurns = 0;
+            // Check if we can move there
+            if (!rc.canMove(dir))
+                continue;
+
+            // Skip if occupied by robot
+            if (rc.canSenseLocation(next)) {
+                RobotInfo at = rc.senseRobotAtLocation(next);
+                if (at != null)
+                    continue;
+            }
+
+            // Calculate distance improvement
+            int dist = next.distanceSquaredTo(target);
+            if (dist < bestDist) {
+                bestMove = next;
+                bestDir = dir;
+                bestDist = dist;
             }
         }
 
-        if (m.bugging) {
-            Direction[] bugDirs;
-            if (m.bugLeft) {
-                bugDirs = new Direction[] {
-                        desired.rotateLeft(),
-                        desired.rotateLeft().rotateLeft(),
-                        desired,
-                        desired.rotateRight(),
-                        desired.rotateRight().rotateRight(),
-                        desired.opposite().rotateRight(),
-                        desired.opposite().rotateLeft(),
-                        desired.opposite()
-                };
-            } else {
-                bugDirs = new Direction[] {
-                        desired.rotateRight(),
-                        desired.rotateRight().rotateRight(),
-                        desired,
-                        desired.rotateLeft(),
-                        desired.rotateLeft().rotateLeft(),
-                        desired.opposite().rotateLeft(),
-                        desired.opposite().rotateRight(),
-                        desired.opposite()
-                };
+        // Execute the best move if found
+        if (bestMove != null && bestDir != null) {
+            if (rc.getDirection() != bestDir && rc.canTurn(bestDir)) {
+                rc.turn(bestDir);
             }
-
-            for (Direction d : bugDirs) {
-                if (tryMoveDirAvoidRecent(rc, m, d, here)) {
-                    m.bugTurns++;
-                    m.failedMoves = 0;
-
-                    if (rc.canMove(desired) || m.bugTurns > 12) {
-                        m.bugging = false;
-                        m.bugTurns = 0;
-                    }
-                    return true;
-                }
+            if (rc.canMove(bestDir)) {
+                rc.move(bestDir);
+                m.prev2 = m.prev1;
+                m.prev1 = here;
+                m.failedMoves = 0;
+                return true;
             }
+        }
 
-            m.bugTurns++;
-            if (m.bugTurns > 12) {
-                m.bugging = false;
-                m.bugTurns = 0;
-            }
+        // Couldn't move - try to dig through dirt
+        if (tryDigTowardTarget(rc, m, target, desired)) {
+            m.failedMoves = 0;
+            return true;
+        }
+
+        // Still stuck - increment fail counter
+        m.failedMoves++;
+
+        // If stuck too long, pick a new nearby exploration target
+        if (m.failedMoves > 8) {
+            m.explorationTarget = pickRandomNearbyTarget(rc, m);
+            m.failedMoves = 0;
+            m.turnsAtTarget = 0;
         }
 
         return false;
     }
 
-    static boolean tryMoveDirAvoidRecent(RobotController rc, Mem m, Direction dir, MapLocation oldLoc) throws GameActionException {
-        if (dir == null || dir == Direction.CENTER) return false;
+    // Try to dig dirt blocking path to target
+    static boolean tryDigTowardTarget(RobotController rc, Mem m, MapLocation target, Direction desired)
+            throws GameActionException {
+        MapLocation here = rc.getLocation();
 
-        MapLocation next = oldLoc.add(dir);
+        // Check directions in priority order
+        Direction[] digDirs = {
+                desired,
+                desired.rotateLeft(),
+                desired.rotateRight(),
+                desired.rotateLeft().rotateLeft(),
+                desired.rotateRight().rotateRight()
+        };
 
-        // anti-oscillation
-        if ((m.prev1 != null && next.equals(m.prev1)) || (m.prev2 != null && next.equals(m.prev2))) {
-            return false;
-        }
+        for (Direction dir : digDirs) {
+            if (dir == null || dir == Direction.CENTER)
+                continue;
 
-        // avoid occupied tiles (robots)
-        if (rc.canSenseLocation(next)) {
-            RobotInfo at = rc.senseRobotAtLocation(next);
-            if (at != null) return false;
-        }
+            MapLocation digLoc = here.add(dir);
 
-        if (rc.getDirection() != dir && rc.canTurn(dir)) rc.turn(dir);
+            // Check if we can sense and dig this location
+            if (!rc.canSenseLocation(digLoc))
+                continue;
 
-        if (rc.canMove(dir)) {
-            rc.move(dir);
-            m.prev2 = m.prev1;
-            m.prev1 = oldLoc;
+            // Check if there's dirt here
+            MapInfo info = rc.senseMapInfo(digLoc);
+            if (!info.isDirt())
+                continue;
+
+            // Check if we have enough cheese to dig (costs 10 cheese)
+            if (rc.getGlobalCheese() < 10)
+                continue;
+
+            // Dig it!
+            rc.removeDirt(digLoc);
             return true;
         }
 
         return false;
     }
+
+    // Pick a random nearby location to escape being stuck
+    static MapLocation pickRandomNearbyTarget(RobotController rc, Mem m) {
+        MapLocation here = rc.getLocation();
+        int w = rc.getMapWidth();
+        int h = rc.getMapHeight();
+
+        // Random offset 10-20 tiles away
+        int range = 10 + m.rng.nextInt(11);
+        int angle = m.rng.nextInt(8);
+
+        int dx = 0, dy = 0;
+        switch (angle) {
+            case 0:
+                dx = range;
+                dy = 0;
+                break;
+            case 1:
+                dx = range;
+                dy = range;
+                break;
+            case 2:
+                dx = 0;
+                dy = range;
+                break;
+            case 3:
+                dx = -range;
+                dy = range;
+                break;
+            case 4:
+                dx = -range;
+                dy = 0;
+                break;
+            case 5:
+                dx = -range;
+                dy = -range;
+                break;
+            case 6:
+                dx = 0;
+                dy = -range;
+                break;
+            case 7:
+                dx = range;
+                dy = -range;
+                break;
+        }
+
+        int tx = Math.max(3, Math.min(w - 4, here.x + dx));
+        int ty = Math.max(3, Math.min(h - 4, here.y + dy));
+
+        return new MapLocation(tx, ty);
+    }
+
 }
