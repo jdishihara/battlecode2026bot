@@ -18,7 +18,7 @@ public final class Constants {
     public static final int MIN_NEAR_KING_ATTACKERS = 6;
     public static final int NEAR_KING_COUNT_RADIUS = 25;
     public static final int ENEMY_FLEE_RADIUS = 12;  // Distance to flee from enemy rats
-
+    public static final int DEFENDER_CAT_FLEE_RADIUS = 25; // Flee cats at this range
     // ===== RAT KING =====
     public static final int ALERT_RADIUS = 18;
     public static final int ESCAPE_RADIUS = 10;

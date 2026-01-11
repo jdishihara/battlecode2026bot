@@ -5,11 +5,8 @@ import battlecode.common.*;
 import examplefuncsplayer.units.RatKing;
 import examplefuncsplayer.units.BabyRatAttacker;
 import examplefuncsplayer.units.BabyRatHauler;
+import examplefuncsplayer.units.BabyRatDefender;  // ADD THIS
 
-/**
- * Thin dispatcher: routes each unit to its role file.
- * All constants/state machines live in config/ + units/.
- */
 public class RobotPlayer {
 
     static int turnCount = 0;
@@ -27,17 +24,19 @@ public class RobotPlayer {
                 if (type == UnitType.RAT_KING) {
                     RatKing.run(rc, turnCount);
                 } else if (type == UnitType.BABY_RAT) {
-                    // Keep the same role split rule you had before:
-                    // even ID = attacker, odd ID = hauler
-                    boolean isAttacker = (rc.getID() % 2 == 0);
-                    if (isAttacker) {
+                    // Split into 3 roles using modulo 3:
+                    // ID % 3 == 0 -> Defender (stays near king)
+                    // ID % 3 == 1 -> Attacker (hunts cats/enemies)
+                    // ID % 3 == 2 -> Hauler (collects cheese)
+                    int role = rc.getID() % 3;
+                    
+                    if (role == 0) {
+                        BabyRatDefender.run(rc, turnCount);
+                    } else if (role == 1) {
                         BabyRatAttacker.run(rc, turnCount);
                     } else {
                         BabyRatHauler.run(rc, turnCount);
                     }
-                } else {
-                    // If Battlecode adds other unit types later, do nothing safely.
-                    rc.setIndicatorString("Unhandled unit type: " + type);
                 }
 
             } catch (GameActionException e) {

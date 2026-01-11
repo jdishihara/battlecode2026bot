@@ -16,6 +16,7 @@ public final class Shared {
 
     public static final int ENEMY_RAT_X_INDEX = 5;
     public static final int ENEMY_RAT_Y_INDEX = 6;
-    public static final int ENEMY_THREAT_LEVEL = 7; // 0=none, 1=nearby, 2=attacking
-
+    public static final int ENEMY_THREAT_LEVEL = 7; 
+    public static final int ENEMY_RAT_COUNT_INDEX = 10;
+    
 }
