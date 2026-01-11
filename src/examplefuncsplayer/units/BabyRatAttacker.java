@@ -15,7 +15,7 @@ import static examplefuncsplayer.config.Shared.*;
  */
 public class BabyRatAttacker {
 
-    enum AttackState { SEEK, ATTACK }
+    enum AttackState { SEEK, ATTACK, GUARD }
 
     static class Mem {
         MapLocation kingLocation = null;
@@ -67,6 +67,12 @@ public class BabyRatAttacker {
         int kx = rc.readSharedArray(KING_X_INDEX);
         int ky = rc.readSharedArray(KING_Y_INDEX);
         if (kx != 0 || ky != 0) m.kingLocation = new MapLocation(kx, ky);
+        
+        RobotInfo nearbyEnemyRatNearKing = findNearbyEnemyRatNearKing(rc, m);
+        if (nearbyEnemyRatNearKing != null) {
+            m.state = AttackState.GUARD;
+            m.targetKingLoc = nearbyEnemyRatNearKing.getLocation();
+        }
 
         // flee only when cat very close
         if (shouldAttackerFlee(rc)) {
@@ -92,6 +98,8 @@ public class BabyRatAttacker {
         switch (m.state) {
             case SEEK:   runSeek(rc, m); break;
             case ATTACK: runAttack(rc, m); break;
+            case GUARD:  runGuard(rc, m); break;
+
         }
 
         rc.setIndicatorString("ATTACKER " + m.state +
@@ -141,6 +149,42 @@ public class BabyRatAttacker {
         }
 
         attackerMoveToward(rc, m, m.targetKingLoc);
+    }
+    static void runGuard(RobotController rc, Mem m) throws GameActionException {
+        MapLocation here = rc.getLocation();
+
+        //Find and attack nearby enemy rats
+
+        RobotInfo[] enemies = rc.senseNearbyRobots(20, rc.getTeam().opponent());
+        RobotInfo closestEnemy = null;
+        int closestDist = Integer.MAX_VALUE;
+
+        for (RobotInfo enemy : enemies){
+            if (enemy.getType() == UnitType.BABY_RAT){
+                int dist = here.distanceSquaredTo(enemy.getLocation());
+                if (dist < closestDist){
+                    closestDist = dist;
+                    closestEnemy = enemy;
+                }
+            }
+        }
+        if (closestEnemy != null) {
+            int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
+            if (rc.canAttack(closestEnemy.getLocation(), spend)) {
+                rc.attack(closestEnemy.getLocation(), spend);
+                return;
+            }
+            
+            // Move toward enemy to attack
+            attackerMoveToward(rc, m, closestEnemy.getLocation());
+            return;
+        }
+        // No nearby enemy rats, move back to guarding position near kin
+        if (m.kingLocation != null && here.distanceSquaredTo(m.kingLocation) > 50) {
+            attackerMoveToward(rc, m, m.kingLocation);
+        } else {
+            m.state = AttackState.SEEK;
+        }
     }
 
     // ===== SENSING =====
@@ -192,6 +236,23 @@ public class BabyRatAttacker {
             }
         }
         return best;
+    }
+    static RobotInfo findNearbyEnemyRatNearKing(RobotController rc, Mem m) throws GameActionException {
+        if (m.kingLocation == null) return null;
+        
+        RobotInfo[] nearby = rc.senseNearbyRobots(ATTACKER_VISION_RADIUS);
+        Team enemy = rc.getTeam().opponent();
+        
+        for (RobotInfo r : nearby) {
+            if (r.getTeam() == enemy && r.getType() == UnitType.BABY_RAT) {
+                // Check if enemy is near our king
+                int distToKing = r.getLocation().distanceSquaredTo(m.kingLocation);
+                if (distToKing <= 100) { // Within 10 units of king
+                    return r;
+                }
+            }
+        }
+        return null;
     }
 
     // ===== EXPLORATION TARGETING =====

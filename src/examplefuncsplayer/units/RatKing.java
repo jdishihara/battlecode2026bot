@@ -46,15 +46,26 @@ public class RatKing {
             catDistSq = myLocation.distanceSquaredTo(catLocation);
         }
 
+        RobotInfo nearestEnemyRat = findNearestEnemyRat(rc);
+        MapLocation enemyRatLocation = null;
+        int enemyRatDistSq = Integer.MAX_VALUE;
+
+        if (nearestEnemyRat != null) {
+            enemyRatLocation = nearestEnemyRat.getLocation();
+            enemyRatDistSq = myLocation.distanceSquaredTo(enemyRatLocation);
+        }
+
+
         // ===== STATE TRANSITIONS =====
-        if (nearestCat == null) {
+        if (nearestCat == null && nearestEnemyRat == null) {
             safeRoundsCounter++;
             if (safeRoundsCounter >= 5) {
                 kingState = KingState.SAFE;
             }
         } else {
             safeRoundsCounter = 0;
-            if (catDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS) {
+            if (catDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS ||
+                    enemyRatDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS) {
                 kingState = KingState.ESCAPE;
             } else {
                 kingState = KingState.ALERT;
@@ -81,6 +92,14 @@ public class RatKing {
             rc.writeSharedArray(CAT_X_INDEX, catLocation.x);
             rc.writeSharedArray(CAT_Y_INDEX, catLocation.y);
         }
+        if (enemyRatLocation != null) {
+            rc.writeSharedArray(ENEMY_RAT_X_INDEX, enemyRatLocation.x);
+            rc.writeSharedArray(ENEMY_RAT_Y_INDEX, enemyRatLocation.y);
+            int threatLevel = (enemyRatDistSq < 25) ? 2 : 1;
+            rc.writeSharedArray(ENEMY_THREAT_LEVEL, threatLevel);
+        } else {
+            rc.writeSharedArray(ENEMY_THREAT_LEVEL, 0);
+        }
 
         // ===== BEHAVIOR BY STATE =====
         switch (kingState) {
@@ -94,6 +113,8 @@ public class RatKing {
                 runKingEscapeState(rc, catLocation, catDistSq, roundNum, globalCheese);
                 break;
         }
+        kingCounterAttack(rc);
+
 
         rc.setIndicatorString("King " + kingState + " | Cheese: " + globalCheese +
                 " | CatDist: " + (catDistSq == Integer.MAX_VALUE ? "none" : Math.sqrt(catDistSq)));
@@ -121,6 +142,27 @@ public class RatKing {
         return nearestCat;
     }
 
+    static RobotInfo findNearestEnemyRat(RobotController rc) throws GameActionException {
+        RobotInfo[] nearbyRobots = rc.senseNearbyRobots(ALERT_RADIUS);
+        Team enemy = rc.getTeam().opponent();
+        MapLocation myLocation = rc.getLocation();
+
+        RobotInfo nearestEnemy = null;
+        int minDist = Integer.MAX_VALUE;
+
+        for (RobotInfo robot : nearbyRobots) {
+            if (robot.getTeam() == enemy &&
+                    (robot.getType() == UnitType.BABY_RAT || robot.getType() == UnitType.RAT_KING)) {
+                int dist = myLocation.distanceSquaredTo(robot.getLocation());
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestEnemy = robot;
+                }
+            }
+        }
+        return nearestEnemy;
+    }
+
     /**
      * Count allied baby rats near the king within a given radius.
      */
@@ -133,6 +175,50 @@ public class RatKing {
         }
         return count;
     }
+    static void kingCounterAttack(RobotController rc) throws GameActionException {
+        // Rat king can attack adjacent enemies (within distance 8 from center per specs)
+        RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
+
+        for (RobotInfo enemy : enemies) {
+            if (enemy.getType() == UnitType.BABY_RAT || enemy.getType() == UnitType.RAT_KING) {
+                MapLocation enemyLoc = enemy.getLocation();
+                int cheeseBoost = Math.min(KING_ATTACK_CHEESE_BOOST, rc.getGlobalCheese() / 10);
+
+                if (rc.canAttack(enemyLoc, cheeseBoost)) {
+                    rc.attack(enemyLoc, cheeseBoost);
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Place defensive rat traps around the king.
+     */
+    static void placeDefensiveTraps(RobotController rc) throws GameActionException {
+        if (rc.getGlobalCheese() < 150) return; // Need buffer for king consumption + trap cost
+
+        MapLocation kingLoc = rc.getLocation();
+
+        // Place traps in a defensive ring around king
+        Direction[] trapDirs = {
+                Direction.NORTH, Direction.NORTHEAST, Direction.EAST, Direction.SOUTHEAST,
+                Direction.SOUTH, Direction.SOUTHWEST, Direction.WEST, Direction.NORTHWEST
+        };
+
+        for (Direction dir : trapDirs) {
+            MapLocation trapLoc = kingLoc.add(dir).add(dir); // 2 tiles out
+            if (rc.canPlaceRatTrap(trapLoc)) {
+                rc.placeRatTrap(trapLoc);
+                return; // One trap per turn
+            }
+        }
+    }
+
+    /**
+     * Place defensive dirt walls around the king.
+     */
+    
 
     /**
      * King SAFE state: normal spawning behavior.
@@ -140,10 +226,14 @@ public class RatKing {
     static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount) throws GameActionException {
         int minCheeseForSpawn = spawnCost + 100;
 
+        if (turnCount % 10 == 0) { // Try placing traps periodically
+            placeDefensiveTraps(rc);
+        }
+
         // Condition (1): low near-king population
         int nearbyBabies = countAlliedBabyRatsNearKing(rc, NEAR_KING_COUNT_RADIUS);
         int desiredNearKingBabies = MIN_NEAR_KING_HAULERS + MIN_NEAR_KING_ATTACKERS;
-        boolean lowRats = nearbyBabies < desiredNearKingBabies;
+        boolean lowRats = nearbyBabies < Math.max(desiredNearKingBabies, MIN_DEFENDERS_NEAR_KING);
 
         // Condition (2): enough cheese
         boolean enoughCheese = globalCheese >= minCheeseForSpawn && globalCheese >= CRITICAL_CHEESE_THRESHOLD;
@@ -171,6 +261,8 @@ public class RatKing {
         int alertSpawnThreshold = LOW_CHEESE_THRESHOLD * 2;
         int minCheeseForSpawn = spawnCost + 200;
 
+        placeDefensiveTraps(rc);
+
         if (globalCheese > alertSpawnThreshold && globalCheese >= minCheeseForSpawn) {
             trySpawnRat(rc);
         }
@@ -190,6 +282,9 @@ public class RatKing {
         if (canAttemptEscape && catLocation != null) {
             // ===== ATTEMPT CAT TRAP PLACEMENT =====
             tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+
+            //===== PLACE RAT TRAPS FOR ENEMY RATS ====
+            placeDefensiveTraps(rc);
 
             // ===== THEN MOVE AWAY =====
             tryKingEscape(rc, catLocation);
