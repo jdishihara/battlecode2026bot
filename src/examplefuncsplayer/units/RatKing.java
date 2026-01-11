@@ -11,6 +11,11 @@ import static examplefuncsplayer.config.Shared.*;
  * Assumes you have:
  * - examplefuncsplayer.config.Constants (all tuning constants + DIRECTIONS)
  * - examplefuncsplayer.config.Shared (shared array indices)
+ * 
+ * v2 Updates:
+ * - Listens for SQUEAK_ENEMY_KING_FOUND from baby rats
+ * - Broadcasts enemy king location to shared array
+ * - Determines and broadcasts map symmetry type
  */
 public class RatKing {
 
@@ -27,6 +32,10 @@ public class RatKing {
     static int lastCatTrapRound = -999;
     static int safeRoundsCounter = 0; // hysteresis: require N safe rounds to return to SAFE
 
+    // === NEW: Enemy king tracking ===
+    static MapLocation lastKnownEnemyKingLoc = null;
+    static int lastEnemyKingSeenRound = -999;
+
     /**
      * Main per-turn entrypoint for the Rat King.
      */
@@ -35,6 +44,12 @@ public class RatKing {
         int globalCheese = rc.getGlobalCheese();
         int spawnCost = rc.getCurrentRatCost();
         int roundNum = rc.getRoundNum();
+
+        // ===== PROCESS INCOMING SQUEAKS (NEW) =====
+        processIncomingSqueaks(rc, roundNum);
+
+        // ===== LOOK FOR ENEMY KING DIRECTLY (NEW) =====
+        detectAndBroadcastEnemyKing(rc, roundNum);
 
         // ===== CAT DETECTION =====
         RobotInfo nearestCat = findNearestCatForKing(rc);
@@ -117,8 +132,117 @@ public class RatKing {
 
 
         rc.setIndicatorString("King " + kingState + " | Cheese: " + globalCheese +
-                " | CatDist: " + (catDistSq == Integer.MAX_VALUE ? "none" : Math.sqrt(catDistSq)));
+                " | CatDist: " + (catDistSq == Integer.MAX_VALUE ? "none" : Math.sqrt(catDistSq)) +
+                " | EnemyKing: " + (lastKnownEnemyKingLoc != null ? lastKnownEnemyKingLoc : "?"));
     }
+
+    // ==================== NEW: ENEMY KING DETECTION & BROADCASTING ====================
+
+    /**
+     * Process incoming squeaks from baby rats.
+     * When a baby rat finds the enemy king, broadcast the location to all rats.
+     */
+    static void processIncomingSqueaks(RobotController rc, int roundNum) throws GameActionException {
+        Message[] messages = rc.readSqueaks(-1);
+        
+        for (Message msg : messages) {
+            int content = msg.getBytes();
+            MapLocation senderLoc = msg.getSource();
+            int senderRound = msg.getRound();
+            
+            // Only process recent squeaks (within last 5 rounds)
+            if (roundNum - senderRound > 5) continue;
+
+            if (content == SQUEAK_ENEMY_KING_FOUND) {
+                // Baby rat found the enemy king! Broadcast to shared array
+                broadcastEnemyKingLocation(rc, senderLoc, roundNum);
+                
+                // Also set swarm target
+                rc.writeSharedArray(SWARM_TARGET_X, senderLoc.x);
+                rc.writeSharedArray(SWARM_TARGET_Y, senderLoc.y);
+                rc.writeSharedArray(SWARM_ACTIVE_ROUND, roundNum % 1000);
+            }
+            else if (content == SQUEAK_ENEMY_ATTACKING_KING) {
+                // Our rats are under attack near enemy king area
+                // Could increase threat level or redirect defenders
+            }
+        }
+    }
+
+    /**
+     * Look for enemy king directly with rat king's 360° vision.
+     * If found, broadcast location and determine symmetry.
+     */
+    static void detectAndBroadcastEnemyKing(RobotController rc, int roundNum) throws GameActionException {
+        RobotInfo enemyKing = findEnemyKing(rc);
+        
+        if (enemyKing != null) {
+            MapLocation enemyKingLoc = enemyKing.getLocation();
+            lastKnownEnemyKingLoc = enemyKingLoc;
+            lastEnemyKingSeenRound = roundNum;
+            
+            // Broadcast to shared array
+            broadcastEnemyKingLocation(rc, enemyKingLoc, roundNum);
+            
+            // Determine and broadcast symmetry type
+            int symmetry = determineSymmetry(rc, enemyKingLoc);
+            if (symmetry > 0) {
+                rc.writeSharedArray(CONFIRMED_SYMMETRY_INDEX, symmetry);
+            }
+        }
+    }
+
+    /**
+     * Broadcast enemy king location to shared array.
+     */
+    static void broadcastEnemyKingLocation(RobotController rc, MapLocation loc, int roundNum) throws GameActionException {
+        rc.writeSharedArray(ENEMY_KING_X_INDEX, loc.x);
+        rc.writeSharedArray(ENEMY_KING_Y_INDEX, loc.y);
+        rc.writeSharedArray(ENEMY_KING_SEEN_ROUND_INDEX, roundNum % 1000);
+        
+        // Update local tracking
+        lastKnownEnemyKingLoc = loc;
+        lastEnemyKingSeenRound = roundNum;
+    }
+
+    /**
+     * Find enemy rat king within vision range.
+     * Rat kings have 360° vision with 25 unit radius.
+     */
+    static RobotInfo findEnemyKing(RobotController rc) throws GameActionException {
+        RobotInfo[] nearby = rc.senseNearbyRobots(25, rc.getTeam().opponent());
+        
+        for (RobotInfo robot : nearby) {
+            if (robot.getType() == UnitType.RAT_KING) {
+                return robot;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Determine which symmetry type the map uses based on enemy king location.
+     * Returns: 1=rotational, 2=horizontal, 3=vertical, 0=unknown
+     */
+    static int determineSymmetry(RobotController rc, MapLocation enemyKingLoc) throws GameActionException {
+        MapLocation ourKing = rc.getLocation();
+        int w = rc.getMapWidth();
+        int h = rc.getMapHeight();
+        
+        // Calculate expected positions for each symmetry
+        MapLocation rotational = new MapLocation(w - 1 - ourKing.x, h - 1 - ourKing.y);
+        MapLocation horizontal = new MapLocation(w - 1 - ourKing.x, ourKing.y);
+        MapLocation vertical = new MapLocation(ourKing.x, h - 1 - ourKing.y);
+        
+        // Check which one is closest (within ~3 tiles for 3x3 king)
+        if (enemyKingLoc.distanceSquaredTo(rotational) <= 18) return 1;  // Rotational
+        if (enemyKingLoc.distanceSquaredTo(horizontal) <= 18) return 2;  // Horizontal
+        if (enemyKingLoc.distanceSquaredTo(vertical) <= 18) return 3;    // Vertical
+        
+        return 0; // Unknown
+    }
+
+    // ==================== EXISTING METHODS (unchanged) ====================
 
     /**
      * Find the nearest cat within ALERT_RADIUS for the king.
@@ -175,6 +299,7 @@ public class RatKing {
         }
         return count;
     }
+    
     static void kingCounterAttack(RobotController rc) throws GameActionException {
         // Rat king can attack adjacent enemies (within distance 8 from center per specs)
         RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
@@ -214,11 +339,6 @@ public class RatKing {
             }
         }
     }
-
-    /**
-     * Place defensive dirt walls around the king.
-     */
-    
 
     /**
      * King SAFE state: normal spawning behavior.
@@ -302,7 +422,6 @@ public class RatKing {
     static void tryPlaceCatTrapDuringEscape(RobotController rc, MapLocation catLocation,
                                             int roundNum, int globalCheese) throws GameActionException {
         // Check if we're in cooperation (no backstabbing yet)
-        // Assuming cooperation unless rc.isBackstabbed() exists, or use a shared array flag
         boolean inCooperation = !isInBackstabMode(rc);
         if (!inCooperation) {
             return; // Only place cat traps during cooperation
@@ -365,13 +484,10 @@ public class RatKing {
             rc.placeCatTrap(bestTrapLoc);
             lastCatTrapRound = roundNum;
         }
-        // If placement fails, just continue with escape (no spamming)
     }
 
     /**
      * Check if we're in backstabbing mode.
-     * If you have a shared array flag for this, use it here.
-     * Otherwise, check for enemy rat attacks or other indicators.
      */
     static boolean isInBackstabMode(RobotController rc) throws GameActionException {
         // Option 1: Use a shared array flag if you track this
@@ -379,7 +495,6 @@ public class RatKing {
         // return backstabFlag == 1;
 
         // Option 2: Simple heuristic - check if we can sense damaged enemy rats nearby
-        // (This is imperfect but lightweight)
         RobotInfo[] nearbyRobots = rc.senseNearbyRobots();
         Team myTeam = rc.getTeam();
         Team enemyTeam = myTeam.opponent();
@@ -403,7 +518,6 @@ public class RatKing {
 
     /**
      * Attempt to move the king away from the cat using best escape direction.
-     * Returns true if movement succeeded.
      */
     static boolean tryKingEscape(RobotController rc, MapLocation catLocation) throws GameActionException {
         MapLocation kingLoc = rc.getLocation();

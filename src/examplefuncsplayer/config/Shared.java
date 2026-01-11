@@ -26,7 +26,9 @@ public final class Shared {
     // ===== ENEMY KING TRACKING (NEW) =====
     public static final int ENEMY_KING_X_INDEX = 9;
     public static final int ENEMY_KING_Y_INDEX = 10;
-    public static final int ENEMY_KING_LAST_SEEN = 11;  // Round number (mod 1000 to fit 0-1023)
+    public static final int ENEMY_KING_LAST_SEEN = 11;
+    public static final int ENEMY_KING_SEEN_ROUND_INDEX = 12;
+    public static final int CONFIRMED_SYMMETRY_INDEX = 13;  // Round number (mod 1000 to fit 0-1023)
 
     // ===== COMBAT COORDINATION (NEW) =====
     public static final int SWARM_TARGET_X = 12;     // Where attackers should converge

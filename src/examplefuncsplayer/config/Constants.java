@@ -46,7 +46,10 @@ public final class Constants {
     public static final int RAT_TRAP_COST = 30;               // From spec
     public static final int RAT_TRAP_DAMAGE = 50;             // From spec
     public static final int GANG_UP_THRESHOLD = 3;            // Attack if 3+ allies nearby
-    public static final int COORDINATED_ATTACK_RADIUS = 16;   // Check for allies in this radius
+    public static final int COORDINATED_ATTACK_RADIUS = 16; 
+  
+       // 0=unknown, 1=rotational, 2=horizontal, 3=vertical
+  // Check for allies in this radius
 
     // ===== SQUEAK MESSAGE TYPES =====
     // Encoded in the squeak's messageContent integer
