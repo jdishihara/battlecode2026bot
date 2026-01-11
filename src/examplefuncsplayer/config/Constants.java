@@ -31,6 +31,11 @@ public final class Constants {
     public static final int MAX_STALE_TARGET_TURNS = 50;
     public static final int BITE_CHEESE_BOOST = 10;
 
+    // Defensive constants
+    public static final int MIN_DEFENDERS_NEAR_KING = 5;
+    public static final int DEFENSIVE_TRAP_RADIUS = 2; // tiles from king
+    public static final int KING_ATTACK_CHEESE_BOOST = 50;
+
     // ===== DIRT DIGGING =====
     public static final int DIG_MIN_CHEESE_HAULER = 500;
     public static final int DIG_MIN_CHEESE_ATTACKER = 1200;
