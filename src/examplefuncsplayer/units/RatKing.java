@@ -119,13 +119,13 @@ public class RatKing {
         // ===== BEHAVIOR BY STATE =====
         switch (kingState) {
             case SAFE:
-                runKingSafeState(rc, globalCheese, spawnCost, turnCount);
+                runKingSafeState(rc, globalCheese, spawnCost, turnCount, enemyRatLocation);
                 break;
             case ALERT:
-                runKingAlertState(rc, globalCheese, spawnCost);
+                runKingAlertState(rc, globalCheese, spawnCost, enemyRatLocation, catLocation, catDistSq, roundNum);
                 break;
             case ESCAPE:
-                runKingEscapeState(rc, catLocation, catDistSq, roundNum, globalCheese);
+                runKingEscapeState(rc, catLocation, catDistSq, roundNum, globalCheese, enemyRatLocation);
                 break;
         }
         kingCounterAttack(rc);
@@ -320,19 +320,47 @@ public class RatKing {
     /**
      * Place defensive rat traps around the king.
      */
-    static void placeDefensiveTraps(RobotController rc) throws GameActionException {
+    static void placeDefensiveTraps(RobotController rc, MapLocation enemyRatLocation) throws GameActionException {
         if (rc.getGlobalCheese() < 150) return; // Need buffer for king consumption + trap cost
 
         MapLocation kingLoc = rc.getLocation();
 
-        // Place traps in a defensive ring around king
+        // If we see an enemy rat, place traps between it and the king.
+        if (enemyRatLocation != null) {
+            Direction toEnemy = kingLoc.directionTo(enemyRatLocation);
+            Direction[] approachDirs = {
+                    toEnemy,
+                    toEnemy.rotateLeft(),
+                    toEnemy.rotateRight(),
+                    toEnemy.rotateLeft().rotateLeft(),
+                    toEnemy.rotateRight().rotateRight()
+            };
+
+            for (Direction dir : approachDirs) {
+                MapLocation trapLoc = kingLoc;
+                for (int i = 0; i < DEFENSIVE_TRAP_RADIUS; i++) {
+                    trapLoc = trapLoc.add(dir);
+                }
+                if (rc.canPlaceRatTrap(trapLoc)) {
+                    rc.placeRatTrap(trapLoc);
+                    return; // One trap per turn
+                }
+            }
+        }
+
+        // Fallback: place traps in a defensive ring around king
         Direction[] trapDirs = {
                 Direction.NORTH, Direction.NORTHEAST, Direction.EAST, Direction.SOUTHEAST,
                 Direction.SOUTH, Direction.SOUTHWEST, Direction.WEST, Direction.NORTHWEST
         };
 
-        for (Direction dir : trapDirs) {
-            MapLocation trapLoc = kingLoc.add(dir).add(dir); // 2 tiles out
+        int startIdx = rc.getRoundNum() % trapDirs.length;
+        for (int i = 0; i < trapDirs.length; i++) {
+            Direction dir = trapDirs[(startIdx + i) % trapDirs.length];
+            MapLocation trapLoc = kingLoc;
+            for (int step = 0; step < DEFENSIVE_TRAP_RADIUS; step++) {
+                trapLoc = trapLoc.add(dir);
+            }
             if (rc.canPlaceRatTrap(trapLoc)) {
                 rc.placeRatTrap(trapLoc);
                 return; // One trap per turn
@@ -343,11 +371,12 @@ public class RatKing {
     /**
      * King SAFE state: normal spawning behavior.
      */
-    static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount) throws GameActionException {
+    static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount,
+                                 MapLocation enemyRatLocation) throws GameActionException {
         int minCheeseForSpawn = spawnCost + 100;
 
         if (turnCount % 10 == 0) { // Try placing traps periodically
-            placeDefensiveTraps(rc);
+            placeDefensiveTraps(rc, enemyRatLocation);
         }
 
         // Condition (1): low near-king population
@@ -377,11 +406,21 @@ public class RatKing {
     /**
      * King ALERT state: limit spawning, do not move.
      */
-    static void runKingAlertState(RobotController rc, int globalCheese, int spawnCost) throws GameActionException {
+    static void runKingAlertState(RobotController rc, int globalCheese, int spawnCost,
+                                  MapLocation enemyRatLocation, MapLocation catLocation,
+                                  int catDistSq, int roundNum) throws GameActionException {
         int alertSpawnThreshold = LOW_CHEESE_THRESHOLD * 2;
         int minCheeseForSpawn = spawnCost + 200;
 
-        placeDefensiveTraps(rc);
+        placeDefensiveTraps(rc, enemyRatLocation);
+
+        // Place cat traps earlier in ALERT if a cat is within mid-range.
+        if (catLocation != null) {
+            final int MID_RANGE = 15;
+            if (catDistSq <= MID_RANGE * MID_RANGE) {
+                tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+            }
+        }
 
         if (globalCheese > alertSpawnThreshold && globalCheese >= minCheeseForSpawn) {
             trySpawnRat(rc);
@@ -393,7 +432,7 @@ public class RatKing {
      * King ESCAPE state: place cat trap if in cooperation, then attempt to move away from cat.
      */
     static void runKingEscapeState(RobotController rc, MapLocation catLocation, int catDistSq,
-                                   int roundNum, int globalCheese) throws GameActionException {
+                                   int roundNum, int globalCheese, MapLocation enemyRatLocation) throws GameActionException {
         // Do NOT spawn while escaping
 
         boolean canAttemptEscape = (roundNum - lastEscapeRound >= ESCAPE_COOLDOWN) ||
@@ -404,7 +443,10 @@ public class RatKing {
             tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
 
             //===== PLACE RAT TRAPS FOR ENEMY RATS ====
-            placeDefensiveTraps(rc);
+            // Skip rat traps if cheese is low during cat escape; save actions to move/turn.
+            if (globalCheese >= 200) {
+                placeDefensiveTraps(rc, enemyRatLocation);
+            }
 
             // ===== THEN MOVE AWAY =====
             tryKingEscape(rc, catLocation);
@@ -523,6 +565,7 @@ public class RatKing {
         MapLocation kingLoc = rc.getLocation();
         int mapWidth = rc.getMapWidth();
         int mapHeight = rc.getMapHeight();
+        MapInfo[] nearby = rc.senseNearbyMapInfos();
 
         // Direction away from cat
         Direction awayDir = catLocation.directionTo(kingLoc);
@@ -554,6 +597,13 @@ public class RatKing {
                     newLoc.y <= 2 || newLoc.y >= mapHeight - 3) {
                 score -= 50;
             }
+            // penalty for dead-ends (few passable neighbors)
+            int passableNeighbors = countPassableNeighbors(newLoc, nearby);
+            if (passableNeighbors <= 1) {
+                score -= 80;
+            } else if (passableNeighbors == 2) {
+                score -= 30;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -566,6 +616,26 @@ public class RatKing {
             return true;
         }
         return false;
+    }
+
+    static int countPassableNeighbors(MapLocation loc, MapInfo[] nearby) {
+        int count = 0;
+        for (Direction d : DIRECTIONS) {
+            MapLocation next = loc.add(d);
+            if (isLocationPassable(next, nearby)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    static boolean isLocationPassable(MapLocation loc, MapInfo[] nearby) {
+        for (MapInfo info : nearby) {
+            if (info.getMapLocation().equals(loc)) {
+                return info.isPassable();
+            }
+        }
+        return true; // unseen = assume passable
     }
 
     /**
