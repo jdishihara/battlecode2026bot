@@ -52,8 +52,19 @@ public class BabyRatHauler {
 
         int turnsAtTarget = 0;
 
+        // Wall-following for unstuck
+        boolean wallFollowing = false;
+        int wallFollowTurns = 0;
+        boolean followLeft = false;
+        
+        MapLocation lastStuckLocation = null;
+        int consecutiveFailedMoves = 0;
+
         final Random rng;
-        Mem(int id) { rng = new Random(6147L + id * 31L); }
+        Mem(int id) { 
+            rng = new Random(6147L + id * 31L);
+            followLeft = (id % 2 == 0); // Alternate wall follow direction
+        }
     }
 
     private static final Map<Integer, Mem> MEM = new HashMap<>();
@@ -304,15 +315,23 @@ public class BabyRatHauler {
 
         MapLocation nearestMine = findNearestCheeseMine(rc, nearby);
 
-        // stuck detection
-        if (isStuckInLoop(m)) m.stuckCounter++;
-        else m.stuckCounter = 0;
+        // Enhanced stuck detection
+        if (isStuckInLoop(m)) {
+            m.stuckCounter++;
+            if (m.lastStuckLocation == null || !m.lastStuckLocation.equals(here)) {
+                m.lastStuckLocation = here;
+            }
+        } else {
+            m.stuckCounter = 0;
+        }
 
-        if (m.stuckCounter >= STUCK_THRESHOLD) {
+        // Trigger unstuck earlier and more aggressively
+        if (m.stuckCounter >= STUCK_THRESHOLD || m.consecutiveFailedMoves >= 3) {
             performUnstuckManeuver(rc, m);
             m.explorationTarget = null;
             m.turnsAtTarget = 0;
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
@@ -344,8 +363,13 @@ public class BabyRatHauler {
             target = m.explorationTarget;
         }
 
-        if (target != null) intelligentMoveToward(rc, m, target, nearby, threat);
-        else exploreInDirection(rc, m.explorationDirection);
+        if (target != null) {
+            boolean moved = intelligentMoveToward(rc, m, target, nearby, threat);
+            if (!moved) m.consecutiveFailedMoves++;
+            else m.consecutiveFailedMoves = 0;
+        } else {
+            exploreInDirection(rc, m.explorationDirection);
+        }
     }
 
     static void runCollect(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
@@ -356,6 +380,7 @@ public class BabyRatHauler {
         if (raw >= EARLY_RETURN_RAW) {
             m.currentState = RatState.RETURN;
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
@@ -370,17 +395,21 @@ public class BabyRatHauler {
                 m.currentState = RatState.EXPLORE;
             }
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
         if (rc.canPickUpCheese(nearestCheese)) rc.pickUpCheese(nearestCheese);
-        intelligentMoveToward(rc, m, nearestCheese, nearby, threat);
+        boolean moved = intelligentMoveToward(rc, m, nearestCheese, nearby, threat);
+        if (!moved) m.consecutiveFailedMoves++;
+        else m.consecutiveFailedMoves = 0;
     }
 
     static void runReturn(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
         if (m.kingLocation == null) {
             m.currentState = RatState.EXPLORE;
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
@@ -388,6 +417,7 @@ public class BabyRatHauler {
         if (raw == 0) {
             m.currentState = RatState.EXPLORE;
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
@@ -400,17 +430,21 @@ public class BabyRatHauler {
         if (rc.canTransferCheese(m.kingLocation, raw)) {
             m.currentState = RatState.DELIVER;
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
         MapInfo[] nearby = rc.senseNearbyMapInfos();
-        intelligentMoveToward(rc, m, m.kingLocation, nearby, threat);
+        boolean moved = intelligentMoveToward(rc, m, m.kingLocation, nearby, threat);
+        if (!moved) m.consecutiveFailedMoves++;
+        else m.consecutiveFailedMoves = 0;
     }
 
     static void runDeliver(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
         if (m.kingLocation == null) {
             m.currentState = RatState.EXPLORE;
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
@@ -418,6 +452,7 @@ public class BabyRatHauler {
         if (raw == 0) {
             m.currentState = RatState.EXPLORE;
             m.stuckCounter = 0;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
@@ -430,11 +465,14 @@ public class BabyRatHauler {
         if (rc.canTransferCheese(m.kingLocation, raw)) {
             rc.transferCheese(m.kingLocation, raw);
             m.moveAwayCounter = 2;
+            m.consecutiveFailedMoves = 0;
             return;
         }
 
         MapInfo[] nearby = rc.senseNearbyMapInfos();
-        intelligentMoveToward(rc, m, m.kingLocation, nearby, threat);
+        boolean moved = intelligentMoveToward(rc, m, m.kingLocation, nearby, threat);
+        if (!moved) m.consecutiveFailedMoves++;
+        else m.consecutiveFailedMoves = 0;
     }
 
     static void runFlee(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
@@ -476,8 +514,8 @@ public class BabyRatHauler {
 
     // ===== MOVEMENT / DIGGING =====
 
-    static void intelligentMoveToward(RobotController rc, Mem m, MapLocation target,
-                                      MapInfo[] nearby, ThreatInfo threat) throws GameActionException {
+    static boolean intelligentMoveToward(RobotController rc, Mem m, MapLocation target,
+                                         MapInfo[] nearby, ThreatInfo threat) throws GameActionException {
         MapLocation here = rc.getLocation();
 
         // Safety override: don't move toward king when threatened
@@ -487,23 +525,42 @@ public class BabyRatHauler {
             Direction perp1 = awayThreat.rotateLeft();
             Direction perp2 = awayThreat.rotateRight();
 
-            if (tryMoveInDirection(rc, perp1)) return;
-            if (tryMoveInDirection(rc, perp2)) return;
-            return;
+            if (tryMoveInDirection(rc, perp1)) return true;
+            if (tryMoveInDirection(rc, perp2)) return true;
+            return false;
         }
 
         Direction desired = here.directionTo(target);
-        if (desired == Direction.CENTER) return;
+        if (desired == Direction.CENTER) return false;
+
+        // Wall-following mode for getting unstuck
+        if (m.wallFollowing) {
+            boolean moved = performWallFollow(rc, m, desired, nearby);
+            m.wallFollowTurns++;
+            if (m.wallFollowTurns > 15 || moved && canMoveToward(rc, desired, nearby)) {
+                m.wallFollowing = false;
+                m.wallFollowTurns = 0;
+            }
+            return moved;
+        }
 
         // dig only for haulers when global cheese is decent
-        if (maybeDigBlockingDirt(rc, m, desired, nearby)) return;
+        if (maybeDigBlockingDirt(rc, m, desired, nearby)) return true;
 
         Direction best = findBestPassableDirection(here, desired, nearby);
         if (best != null) {
-            if (rc.getDirection() != best && rc.canTurn(best)) rc.turn(best);
-            if (rc.canMoveForward()) rc.moveForward();
+            boolean moved = false;
+            if (rc.getDirection() != best && rc.canTurn(best)) {
+                rc.turn(best);
+                moved = true;
+            }
+            if (rc.canMoveForward()) {
+                rc.moveForward();
+                moved = true;
+            }
+            return moved;
         } else {
-            moveToward(rc, target);
+            return moveToward(rc, target);
         }
     }
 
@@ -553,8 +610,31 @@ public class BabyRatHauler {
                 desired.rotateLeft(),
                 desired.rotateRight(),
                 desired.rotateLeft().rotateLeft(),
-                desired.rotateRight().rotateRight()
+                desired.rotateRight().rotateRight(),
+                desired.rotateLeft().rotateLeft().rotateLeft(),
+                desired.rotateRight().rotateRight().rotateRight()
         };
+        
+        // Find first passable direction that's not a dead end
+        for (Direction d : tryDirs) {
+            MapLocation nxt = here.add(d);
+            if (isLocationPassable(nxt, nearby)) {
+                // Check if this direction leads to a dead end (surrounded by walls/dirt)
+                int passableNeighbors = 0;
+                for (Direction checkDir : DIRECTIONS) {
+                    MapLocation beyond = nxt.add(checkDir);
+                    if (isLocationPassable(beyond, nearby)) {
+                        passableNeighbors++;
+                    }
+                }
+                // If there are at least 2 passable neighbors, it's not a dead end
+                if (passableNeighbors >= 2) {
+                    return d;
+                }
+            }
+        }
+        
+        // If no good direction found, try any passable direction
         for (Direction d : tryDirs) {
             MapLocation nxt = here.add(d);
             if (isLocationPassable(nxt, nearby)) return d;
@@ -569,7 +649,7 @@ public class BabyRatHauler {
         return true; // unseen = assume passable
     }
 
-    static void moveToward(RobotController rc, MapLocation target) throws GameActionException {
+    static boolean moveToward(RobotController rc, MapLocation target) throws GameActionException {
         MapLocation here = rc.getLocation();
         Direction desired = here.directionTo(target);
         Direction[] tryDirs = {
@@ -579,12 +659,25 @@ public class BabyRatHauler {
                 desired.rotateLeft().rotateLeft(),
                 desired.rotateRight().rotateRight()
         };
-        for (Direction d : tryDirs) if (tryMoveInDirection(rc, d)) return;
+        for (Direction d : tryDirs) {
+            if (tryMoveInDirection(rc, d)) return true;
+        }
+        return false;
     }
 
     static boolean tryMoveInDirection(RobotController rc, Direction dir) throws GameActionException {
         boolean did = false;
         if (dir == null || dir == Direction.CENTER) return false;
+
+        // Check if there's a robot blocking our path
+        MapLocation target = rc.getLocation().add(dir);
+        if (rc.canSenseLocation(target)) {
+            RobotInfo blocker = rc.senseRobotAtLocation(target);
+            if (blocker != null) {
+                // Don't try to move into occupied space
+                return false;
+            }
+        }
 
         if (rc.getDirection() != dir && rc.canTurn(dir)) {
             rc.turn(dir);
@@ -642,15 +735,91 @@ public class BabyRatHauler {
     }
 
     static void performUnstuckManeuver(RobotController rc, Mem m) throws GameActionException {
+        // Enter wall-following mode to escape
+        m.wallFollowing = true;
+        m.wallFollowTurns = 0;
+        
+        // Try to move in any direction immediately
         Direction cur = rc.getDirection();
-        Direction newDir = m.rng.nextBoolean() ? cur.rotateLeft().rotateLeft() : cur.rotateRight().rotateRight();
-        if (rc.canTurn(newDir)) rc.turn(newDir);
-
-        for (int i = 0; i < 3; i++) {
-            if (rc.canMoveForward()) { rc.moveForward(); return; }
-            Direction tryDir = DIRECTIONS[m.rng.nextInt(8)];
-            if (rc.canTurn(tryDir)) rc.turn(tryDir);
+        Direction[] emergencyDirs = {
+                cur.rotateRight().rotateRight(),
+                cur.rotateLeft().rotateLeft(),
+                cur.opposite(),
+                cur.rotateRight(),
+                cur.rotateLeft()
+        };
+        
+        for (Direction dir : emergencyDirs) {
+            if (tryMoveInDirection(rc, dir)) {
+                return;
+            }
         }
+        
+        // If truly stuck, try all 8 directions
+        for (Direction dir : DIRECTIONS) {
+            if (tryMoveInDirection(rc, dir)) {
+                return;
+            }
+        }
+    }
+    
+    /**
+     * Wall-following behavior to escape tight spaces.
+     * Tries to hug a wall while making progress toward target.
+     */
+    static boolean performWallFollow(RobotController rc, Mem m, Direction desired, MapInfo[] nearby) throws GameActionException {
+        Direction cur = rc.getDirection();
+        
+        // Choose which side to follow based on memory
+        Direction[] followDirs;
+        if (m.followLeft) {
+            followDirs = new Direction[] {
+                    desired,
+                    desired.rotateLeft(),
+                    desired.rotateLeft().rotateLeft(),
+                    cur.rotateLeft(),
+                    cur,
+                    cur.rotateRight(),
+                    desired.rotateRight()
+            };
+        } else {
+            followDirs = new Direction[] {
+                    desired,
+                    desired.rotateRight(),
+                    desired.rotateRight().rotateRight(),
+                    cur.rotateRight(),
+                    cur,
+                    cur.rotateLeft(),
+                    desired.rotateLeft()
+            };
+        }
+        
+        // Try each direction, checking for passability
+        for (Direction dir : followDirs) {
+            if (dir == null || dir == Direction.CENTER) continue;
+            
+            MapLocation next = rc.getLocation().add(dir);
+            if (isLocationPassable(next, nearby)) {
+                if (rc.getDirection() != dir && rc.canTurn(dir)) {
+                    rc.turn(dir);
+                }
+                if (rc.canMoveForward()) {
+                    rc.moveForward();
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if we can move toward a direction (for exiting wall-follow mode).
+     */
+    static boolean canMoveToward(RobotController rc, Direction desired, MapInfo[] nearby) {
+        MapLocation here = rc.getLocation();
+        MapLocation target = here.add(desired);
+        return isLocationPassable(target, nearby);
     }
 
     static MapLocation pickNewExplorationTarget(RobotController rc, Mem m) {
