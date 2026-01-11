@@ -192,28 +192,6 @@ public class RatKing {
         }
     }
 
-    /**
-     * Place defensive rat traps around the king.
-     */
-    static void placeDefensiveTraps(RobotController rc) throws GameActionException {
-        if (rc.getGlobalCheese() < 150) return; // Need buffer for king consumption + trap cost
-
-        MapLocation kingLoc = rc.getLocation();
-
-        // Place traps in a defensive ring around king
-        Direction[] trapDirs = {
-                Direction.NORTH, Direction.NORTHEAST, Direction.EAST, Direction.SOUTHEAST,
-                Direction.SOUTH, Direction.SOUTHWEST, Direction.WEST, Direction.NORTHWEST
-        };
-
-        for (Direction dir : trapDirs) {
-            MapLocation trapLoc = kingLoc.add(dir).add(dir); // 2 tiles out
-            if (rc.canPlaceRatTrap(trapLoc)) {
-                rc.placeRatTrap(trapLoc);
-                return; // One trap per turn
-            }
-        }
-    }
 
     /**
      * Place defensive dirt walls around the king.
@@ -225,10 +203,6 @@ public class RatKing {
      */
     static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount) throws GameActionException {
         int minCheeseForSpawn = spawnCost + 100;
-
-        if (turnCount % 10 == 0) { // Try placing traps periodically
-            placeDefensiveTraps(rc);
-        }
 
         // Condition (1): low near-king population
         int nearbyBabies = countAlliedBabyRatsNearKing(rc, NEAR_KING_COUNT_RADIUS);
@@ -261,8 +235,6 @@ public class RatKing {
         int alertSpawnThreshold = LOW_CHEESE_THRESHOLD * 2;
         int minCheeseForSpawn = spawnCost + 200;
 
-        placeDefensiveTraps(rc);
-
         if (globalCheese > alertSpawnThreshold && globalCheese >= minCheeseForSpawn) {
             trySpawnRat(rc);
         }
@@ -282,9 +254,6 @@ public class RatKing {
         if (canAttemptEscape && catLocation != null) {
             // ===== ATTEMPT CAT TRAP PLACEMENT =====
             tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
-
-            //===== PLACE RAT TRAPS FOR ENEMY RATS ====
-            placeDefensiveTraps(rc);
 
             // ===== THEN MOVE AWAY =====
             tryKingEscape(rc, catLocation);
