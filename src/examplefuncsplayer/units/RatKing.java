@@ -8,14 +8,11 @@ import static examplefuncsplayer.config.Shared.*;
 /**
  * RatKing logic: spawns baby rats, broadcasts shared info, and evades cats.
  *
- * Assumes you have:
- * - examplefuncsplayer.config.Constants (all tuning constants + DIRECTIONS)
- * - examplefuncsplayer.config.Shared (shared array indices)
- * 
- * v2 Updates:
- * - Listens for SQUEAK_ENEMY_KING_FOUND from baby rats
- * - Broadcasts enemy king location to shared array
- * - Determines and broadcasts map symmetry type
+ * v3 Updates:
+ * - CLUSTERED SYMMETRY SEARCH: Manages global symmetry state for all attackers
+ * - All attackers check the same symmetry together (controlled via shared array)
+ * - Listens for symmetry elimination reports from attackers
+ * - Automatically switches all attackers to next symmetry when current is eliminated
  */
 public class RatKing {
 
@@ -30,11 +27,14 @@ public class RatKing {
     static KingState kingState = KingState.SAFE;
     static int lastEscapeRound = -999;
     static int lastCatTrapRound = -999;
-    static int safeRoundsCounter = 0; // hysteresis: require N safe rounds to return to SAFE
+    static int safeRoundsCounter = 0;
 
-    // === NEW: Enemy king tracking ===
+    // === Enemy king tracking ===
     static MapLocation lastKnownEnemyKingLoc = null;
     static int lastEnemyKingSeenRound = -999;
+
+    // === NEW: Symmetry management ===
+    static boolean symmetryInitialized = false;
 
     /**
      * Main per-turn entrypoint for the Rat King.
@@ -45,10 +45,19 @@ public class RatKing {
         int spawnCost = rc.getCurrentRatCost();
         int roundNum = rc.getRoundNum();
 
-        // ===== PROCESS INCOMING SQUEAKS (NEW) =====
+        // ===== INITIALIZE SYMMETRY TRACKING (first turn only) =====
+        if (!symmetryInitialized) {
+            initializeSymmetryTracking(rc, roundNum);
+            symmetryInitialized = true;
+        }
+
+        // ===== UPDATE SYMMETRY STATE (every turn) =====
+        updateSymmetryState(rc, roundNum);
+
+        // ===== PROCESS INCOMING SQUEAKS =====
         processIncomingSqueaks(rc, roundNum);
 
-        // ===== LOOK FOR ENEMY KING DIRECTLY (NEW) =====
+        // ===== LOOK FOR ENEMY KING DIRECTLY =====
         detectAndBroadcastEnemyKing(rc, roundNum);
 
         // ===== CAT DETECTION =====
@@ -69,7 +78,6 @@ public class RatKing {
             enemyRatLocation = nearestEnemyRat.getLocation();
             enemyRatDistSq = myLocation.distanceSquaredTo(enemyRatLocation);
         }
-
 
         // ===== STATE TRANSITIONS =====
         if (nearestCat == null && nearestEnemyRat == null) {
@@ -92,7 +100,6 @@ public class RatKing {
         rc.writeSharedArray(KING_Y_INDEX, myLocation.y);
         rc.writeSharedArray(CHEESE_STATE_INDEX, globalCheese < LOW_CHEESE_THRESHOLD ? 0 : 1);
 
-        // danger: 0=SAFE, 1=ALERT, 2=ESCAPE
         int dangerValue;
         switch (kingState) {
             case SAFE:   dangerValue = 0; break;
@@ -102,7 +109,6 @@ public class RatKing {
         }
         rc.writeSharedArray(DANGER_INDEX, dangerValue);
 
-        // cat location
         if (catLocation != null) {
             rc.writeSharedArray(CAT_X_INDEX, catLocation.x);
             rc.writeSharedArray(CAT_Y_INDEX, catLocation.y);
@@ -130,17 +136,88 @@ public class RatKing {
         }
         kingCounterAttack(rc);
 
+        // Debug string with symmetry info
+        int currentSym = rc.readSharedArray(CURRENT_SYMMETRY_INDEX);
+        int eliminated = rc.readSharedArray(SYMMETRY_ELIMINATED_INDEX);
+        String symStr = currentSym == 1 ? "ROT" : currentSym == 2 ? "HOR" : currentSym == 3 ? "VER" : "UNK";
+        String elimStr = ((eliminated & 1) != 0 ? "R" : "") +
+                         ((eliminated & 2) != 0 ? "H" : "") +
+                         ((eliminated & 4) != 0 ? "V" : "");
 
         rc.setIndicatorString("King " + kingState + " | Cheese: " + globalCheese +
-                " | CatDist: " + (catDistSq == Integer.MAX_VALUE ? "none" : Math.sqrt(catDistSq)) +
+                " | Sym:" + symStr + " Elim:" + elimStr +
                 " | EnemyKing: " + (lastKnownEnemyKingLoc != null ? lastKnownEnemyKingLoc : "?"));
     }
 
-    // ==================== NEW: ENEMY KING DETECTION & BROADCASTING ====================
+    // ==================== SYMMETRY MANAGEMENT (NEW) ====================
+
+    /**
+     * Initialize symmetry tracking at game start.
+     * Sets all attackers to check rotational symmetry first.
+     */
+    static void initializeSymmetryTracking(RobotController rc, int roundNum) throws GameActionException {
+        int currentSym = rc.readSharedArray(CURRENT_SYMMETRY_INDEX);
+        
+        // Only initialize if not already set
+        if (currentSym == 0) {
+            rc.writeSharedArray(CURRENT_SYMMETRY_INDEX, 1); // 1 = rotational (most common)
+            rc.writeSharedArray(SYMMETRY_ELIMINATED_INDEX, 0); // No symmetries eliminated yet
+            rc.writeSharedArray(SYMMETRY_SWITCH_ROUND_INDEX, roundNum % 1000);
+        }
+    }
+
+    /**
+     * Update symmetry state based on attacker reports.
+     * If current symmetry is eliminated, switch all attackers to next one.
+     */
+    static void updateSymmetryState(RobotController rc, int roundNum) throws GameActionException {
+        int currentSym = rc.readSharedArray(CURRENT_SYMMETRY_INDEX);
+        int eliminated = rc.readSharedArray(SYMMETRY_ELIMINATED_INDEX);
+        
+        // Check if current symmetry has been eliminated
+        if (currentSym >= 1 && currentSym <= 3) {
+            int currentBit = 1 << (currentSym - 1);
+            
+            if ((eliminated & currentBit) != 0) {
+                // Current symmetry is eliminated - switch to next valid one
+                int nextSym = findNextSymmetry(eliminated);
+                if (nextSym != currentSym) {
+                    rc.writeSharedArray(CURRENT_SYMMETRY_INDEX, nextSym);
+                    rc.writeSharedArray(SYMMETRY_SWITCH_ROUND_INDEX, roundNum % 1000);
+                }
+            }
+        }
+    }
+
+    /**
+     * Find the next non-eliminated symmetry.
+     * Priority: rotational (1) -> horizontal (2) -> vertical (3)
+     */
+    static int findNextSymmetry(int eliminated) {
+        if ((eliminated & 1) == 0) return 1; // Rotational not eliminated
+        if ((eliminated & 2) == 0) return 2; // Horizontal not eliminated
+        if ((eliminated & 4) == 0) return 3; // Vertical not eliminated
+        return 1; // All eliminated (shouldn't happen), default to rotational
+    }
+
+    /**
+     * Mark a symmetry as eliminated in the shared array.
+     * @param symType 1=rotational, 2=horizontal, 3=vertical
+     */
+    static void eliminateSymmetry(RobotController rc, int symType) throws GameActionException {
+        if (symType < 1 || symType > 3) return;
+        int current = rc.readSharedArray(SYMMETRY_ELIMINATED_INDEX);
+        int bit = 1 << (symType - 1);
+        if ((current & bit) == 0) {
+            rc.writeSharedArray(SYMMETRY_ELIMINATED_INDEX, current | bit);
+        }
+    }
+
+    // ==================== ENEMY KING DETECTION & BROADCASTING ====================
 
     /**
      * Process incoming squeaks from baby rats.
-     * When a baby rat finds the enemy king, broadcast the location to all rats.
+     * Handles: enemy king found, symmetry elimination reports
      */
     static void processIncomingSqueaks(RobotController rc, int roundNum) throws GameActionException {
         Message[] messages = rc.readSqueaks(-1);
@@ -148,30 +225,35 @@ public class RatKing {
         for (Message msg : messages) {
             int content = msg.getBytes();
             MapLocation senderLoc = msg.getSource();
-            int senderRound = msg.getRound();
-            
-            // Only process recent squeaks (within last 5 rounds)
-            if (roundNum - senderRound > 5) continue;
 
+            // === Handle symmetry elimination reports (NEW) ===
+            if (content >= SQUEAK_SYMMETRY_ELIMINATED && content < SQUEAK_SYMMETRY_ELIMINATED + 30) {
+                int eliminatedSymIndex = (content - SQUEAK_SYMMETRY_ELIMINATED) / 10;
+                if (eliminatedSymIndex >= 0 && eliminatedSymIndex < 3) {
+                    eliminateSymmetry(rc, eliminatedSymIndex + 1); // Convert to 1-indexed
+                }
+                continue;
+            }
+
+            // === Handle enemy king found ===
             if (content == SQUEAK_ENEMY_KING_FOUND) {
                 // Baby rat found the enemy king! Broadcast to shared array
                 broadcastEnemyKingLocation(rc, senderLoc, roundNum);
                 
-                // Also set swarm target
+                // Set swarm target so all attackers converge
                 rc.writeSharedArray(SWARM_TARGET_X, senderLoc.x);
                 rc.writeSharedArray(SWARM_TARGET_Y, senderLoc.y);
                 rc.writeSharedArray(SWARM_ACTIVE_ROUND, roundNum % 1000);
             }
             else if (content == SQUEAK_ENEMY_ATTACKING_KING) {
-                // Our rats are under attack near enemy king area
-                // Could increase threat level or redirect defenders
+                // Our rats are under attack - could increase threat level
             }
         }
     }
 
     /**
      * Look for enemy king directly with rat king's 360° vision.
-     * If found, broadcast location and determine symmetry.
+     * If found, broadcast location and confirm symmetry.
      */
     static void detectAndBroadcastEnemyKing(RobotController rc, int roundNum) throws GameActionException {
         RobotInfo enemyKing = findEnemyKing(rc);
@@ -184,10 +266,16 @@ public class RatKing {
             // Broadcast to shared array
             broadcastEnemyKingLocation(rc, enemyKingLoc, roundNum);
             
-            // Determine and broadcast symmetry type
+            // Determine and confirm symmetry type
             int symmetry = determineSymmetry(rc, enemyKingLoc);
             if (symmetry > 0) {
-                rc.writeSharedArray(CONFIRMED_SYMMETRY_INDEX, symmetry);
+                // Confirm this symmetry and eliminate others
+                rc.writeSharedArray(CURRENT_SYMMETRY_INDEX, symmetry);
+                
+                // Eliminate other symmetries
+                int eliminateMask = 0b111 ^ (1 << (symmetry - 1)); // All except confirmed
+                int currentEliminated = rc.readSharedArray(SYMMETRY_ELIMINATED_INDEX);
+                rc.writeSharedArray(SYMMETRY_ELIMINATED_INDEX, currentEliminated | eliminateMask);
             }
         }
     }
@@ -200,14 +288,12 @@ public class RatKing {
         rc.writeSharedArray(ENEMY_KING_Y_INDEX, loc.y);
         rc.writeSharedArray(ENEMY_KING_SEEN_ROUND_INDEX, roundNum % 1000);
         
-        // Update local tracking
         lastKnownEnemyKingLoc = loc;
         lastEnemyKingSeenRound = roundNum;
     }
 
     /**
      * Find enemy rat king within vision range.
-     * Rat kings have 360° vision with 25 unit radius.
      */
     static RobotInfo findEnemyKing(RobotController rc) throws GameActionException {
         RobotInfo[] nearby = rc.senseNearbyRobots(25, rc.getTeam().opponent());
@@ -229,24 +315,20 @@ public class RatKing {
         int w = rc.getMapWidth();
         int h = rc.getMapHeight();
         
-        // Calculate expected positions for each symmetry
         MapLocation rotational = new MapLocation(w - 1 - ourKing.x, h - 1 - ourKing.y);
         MapLocation horizontal = new MapLocation(w - 1 - ourKing.x, ourKing.y);
         MapLocation vertical = new MapLocation(ourKing.x, h - 1 - ourKing.y);
         
-        // Check which one is closest (within ~3 tiles for 3x3 king)
-        if (enemyKingLoc.distanceSquaredTo(rotational) <= 18) return 1;  // Rotational
-        if (enemyKingLoc.distanceSquaredTo(horizontal) <= 18) return 2;  // Horizontal
-        if (enemyKingLoc.distanceSquaredTo(vertical) <= 18) return 3;    // Vertical
+        // Check which one is closest (within ~4 tiles for 3x3 king)
+        if (enemyKingLoc.distanceSquaredTo(rotational) <= 18) return 1;
+        if (enemyKingLoc.distanceSquaredTo(horizontal) <= 18) return 2;
+        if (enemyKingLoc.distanceSquaredTo(vertical) <= 18) return 3;
         
-        return 0; // Unknown
+        return 0;
     }
 
     // ==================== EXISTING METHODS (unchanged) ====================
 
-    /**
-     * Find the nearest cat within ALERT_RADIUS for the king.
-     */
     static RobotInfo findNearestCatForKing(RobotController rc) throws GameActionException {
         RobotInfo[] nearbyRobots = rc.senseNearbyRobots(ALERT_RADIUS);
         MapLocation myLocation = rc.getLocation();
@@ -287,9 +369,6 @@ public class RatKing {
         return nearestEnemy;
     }
 
-    /**
-     * Count allied baby rats near the king within a given radius.
-     */
     static int countAlliedBabyRatsNearKing(RobotController rc, int radius) throws GameActionException {
         RobotInfo[] robots = rc.senseNearbyRobots(radius);
         int count = 0;
@@ -301,7 +380,6 @@ public class RatKing {
     }
     
     static void kingCounterAttack(RobotController rc) throws GameActionException {
-        // Rat king can attack adjacent enemies (within distance 8 from center per specs)
         RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
 
         for (RobotInfo enemy : enemies) {
@@ -317,15 +395,11 @@ public class RatKing {
         }
     }
 
-    /**
-     * Place defensive rat traps around the king.
-     */
     static void placeDefensiveTraps(RobotController rc, MapLocation enemyRatLocation) throws GameActionException {
-        if (rc.getGlobalCheese() < 150) return; // Need buffer for king consumption + trap cost
+        if (rc.getGlobalCheese() < 150) return;
 
         MapLocation kingLoc = rc.getLocation();
 
-        // If we see an enemy rat, place traps between it and the king.
         if (enemyRatLocation != null) {
             Direction toEnemy = kingLoc.directionTo(enemyRatLocation);
             Direction[] approachDirs = {
@@ -343,12 +417,11 @@ public class RatKing {
                 }
                 if (rc.canPlaceRatTrap(trapLoc)) {
                     rc.placeRatTrap(trapLoc);
-                    return; // One trap per turn
+                    return;
                 }
             }
         }
 
-        // Fallback: place traps in a defensive ring around king
         Direction[] trapDirs = {
                 Direction.NORTH, Direction.NORTHEAST, Direction.EAST, Direction.SOUTHEAST,
                 Direction.SOUTH, Direction.SOUTHWEST, Direction.WEST, Direction.NORTHWEST
@@ -363,37 +436,30 @@ public class RatKing {
             }
             if (rc.canPlaceRatTrap(trapLoc)) {
                 rc.placeRatTrap(trapLoc);
-                return; // One trap per turn
+                return;
             }
         }
     }
 
-    /**
-     * King SAFE state: normal spawning behavior.
-     */
     static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount,
                                  MapLocation enemyRatLocation) throws GameActionException {
         int minCheeseForSpawn = spawnCost + 100;
 
-        if (turnCount % 10 == 0) { // Try placing traps periodically
+        if (turnCount % 10 == 0) {
             placeDefensiveTraps(rc, enemyRatLocation);
         }
 
-        // Condition (1): low near-king population
         int nearbyBabies = countAlliedBabyRatsNearKing(rc, NEAR_KING_COUNT_RADIUS);
         int desiredNearKingBabies = MIN_NEAR_KING_HAULERS + MIN_NEAR_KING_ATTACKERS;
         boolean lowRats = nearbyBabies < Math.max(desiredNearKingBabies, MIN_DEFENDERS_NEAR_KING);
 
-        // Condition (2): enough cheese
         boolean enoughCheese = globalCheese >= minCheeseForSpawn && globalCheese >= CRITICAL_CHEESE_THRESHOLD;
 
-        // Spawn more if BOTH conditions are true
         if (lowRats && enoughCheese) {
             trySpawnRat(rc);
             return;
         }
 
-        // Conservative fallback
         if (turnCount <= 5 && globalCheese >= minCheeseForSpawn) {
             trySpawnRat(rc);
         } else if (globalCheese > LOW_CHEESE_THRESHOLD &&
@@ -403,9 +469,6 @@ public class RatKing {
         }
     }
 
-    /**
-     * King ALERT state: limit spawning, do not move.
-     */
     static void runKingAlertState(RobotController rc, int globalCheese, int spawnCost,
                                   MapLocation enemyRatLocation, MapLocation catLocation,
                                   int catDistSq, int roundNum) throws GameActionException {
@@ -414,7 +477,6 @@ public class RatKing {
 
         placeDefensiveTraps(rc, enemyRatLocation);
 
-        // Place cat traps earlier in ALERT if a cat is within mid-range.
         if (catLocation != null) {
             final int MID_RANGE = 15;
             if (catDistSq <= MID_RANGE * MID_RANGE) {
@@ -425,68 +487,48 @@ public class RatKing {
         if (globalCheese > alertSpawnThreshold && globalCheese >= minCheeseForSpawn) {
             trySpawnRat(rc);
         }
-        // Do not move in ALERT
     }
 
-    /**
-     * King ESCAPE state: place cat trap if in cooperation, then attempt to move away from cat.
-     */
     static void runKingEscapeState(RobotController rc, MapLocation catLocation, int catDistSq,
                                    int roundNum, int globalCheese, MapLocation enemyRatLocation) throws GameActionException {
-        // Do NOT spawn while escaping
-
         boolean canAttemptEscape = (roundNum - lastEscapeRound >= ESCAPE_COOLDOWN) ||
                 (catDistSq <= PANIC_RADIUS * PANIC_RADIUS);
 
         if (canAttemptEscape && catLocation != null) {
-            // ===== ATTEMPT CAT TRAP PLACEMENT =====
             tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
 
-            //===== PLACE RAT TRAPS FOR ENEMY RATS ====
-            // Skip rat traps if cheese is low during cat escape; save actions to move/turn.
             if (globalCheese >= 200) {
                 placeDefensiveTraps(rc, enemyRatLocation);
             }
 
-            // ===== THEN MOVE AWAY =====
             tryKingEscape(rc, catLocation);
             lastEscapeRound = roundNum;
 
-            // After attempting move, transition to ALERT
             kingState = KingState.ALERT;
         }
     }
 
-    /**
-     * Attempt to place one cat trap during escape.
-     * Only works in cooperation mode and respects cooldown + cheese constraints.
-     */
     static void tryPlaceCatTrapDuringEscape(RobotController rc, MapLocation catLocation,
                                             int roundNum, int globalCheese) throws GameActionException {
-        // Check if we're in cooperation (no backstabbing yet)
         boolean inCooperation = !isInBackstabMode(rc);
         if (!inCooperation) {
-            return; // Only place cat traps during cooperation
+            return;
         }
 
-        // Check cooldown (5-10 rounds between trap placements)
-        final int CAT_TRAP_COOLDOWN = 7; // tune as needed
+        final int CAT_TRAP_COOLDOWN = 7;
         if (roundNum - lastCatTrapRound < CAT_TRAP_COOLDOWN) {
             return;
         }
 
-        // Check cheese safety
-        final int CAT_TRAP_COST = 10; // from spec
-        final int SAFE_CHEESE_BUFFER = 50; // safety margin
+        final int CAT_TRAP_COST = 10;
+        final int SAFE_CHEESE_BUFFER = 50;
         if (globalCheese < CAT_TRAP_COST + SAFE_CHEESE_BUFFER) {
-            return; // Don't risk king starvation
+            return;
         }
 
-        // ===== FIND BEST TRAP LOCATION =====
         MapLocation kingLoc = rc.getLocation();
         MapLocation bestTrapLoc = null;
 
-        // Priority 1: Tile between cat and king
         Direction catToKing = catLocation.directionTo(kingLoc);
         if (catToKing != Direction.CENTER) {
             MapLocation betweenLoc = catLocation.add(catToKing);
@@ -495,48 +537,44 @@ public class RatKing {
             }
         }
 
-        // Priority 2: King's current tile (if priority 1 failed)
         if (bestTrapLoc == null && rc.canPlaceCatTrap(kingLoc)) {
             bestTrapLoc = kingLoc;
         }
 
-        // Priority 3: Adjacent tiles (check up to 8 directions)
         if (bestTrapLoc == null) {
             Direction[] adjacentDirs = {
                     Direction.NORTH, Direction.NORTHEAST, Direction.EAST, Direction.SOUTHEAST,
                     Direction.SOUTH, Direction.SOUTHWEST, Direction.WEST, Direction.NORTHWEST
             };
 
-            // Try tiles in direction away from cat first
             Direction awayFromCat = catLocation.directionTo(kingLoc);
             for (Direction dir : adjacentDirs) {
                 MapLocation testLoc = kingLoc.add(dir);
                 if (rc.canPlaceCatTrap(testLoc)) {
                     bestTrapLoc = testLoc;
-                    // Prefer tiles that are more aligned with escape direction
                     if (dir == awayFromCat || dir == awayFromCat.rotateLeft() || dir == awayFromCat.rotateRight()) {
-                        break; // Found good trap location
+                        break;
                     }
                 }
             }
         }
 
-        // ===== PLACE THE TRAP =====
         if (bestTrapLoc != null) {
             rc.placeCatTrap(bestTrapLoc);
             lastCatTrapRound = roundNum;
         }
     }
 
-    /**
-     * Check if we're in backstabbing mode.
-     */
     static boolean isInBackstabMode(RobotController rc) throws GameActionException {
-        // Option 1: Use a shared array flag if you track this
-        // int backstabFlag = rc.readSharedArray(BACKSTAB_FLAG_INDEX);
-        // return backstabFlag == 1;
+        // Check shared array flag
+        try {
+            int backstabFlag = rc.readSharedArray(BACKSTAB_MODE_INDEX);
+            if (backstabFlag == 1) return true;
+        } catch (Exception e) {
+            // Index not set up yet
+        }
 
-        // Option 2: Simple heuristic - check if we can sense damaged enemy rats nearby
+        // Fallback heuristic
         RobotInfo[] nearbyRobots = rc.senseNearbyRobots();
         Team myTeam = rc.getTeam();
         Team enemyTeam = myTeam.opponent();
@@ -544,7 +582,6 @@ public class RatKing {
         for (RobotInfo robot : nearbyRobots) {
             if (robot.getTeam() == enemyTeam &&
                     (robot.getType() == UnitType.BABY_RAT || robot.getType() == UnitType.RAT_KING)) {
-                // If we see an enemy rat with less than full health, assume backstabbing started
                 if (robot.getType() == UnitType.BABY_RAT && robot.getHealth() < 100) {
                     return true;
                 }
@@ -554,20 +591,15 @@ public class RatKing {
             }
         }
 
-        // Default to cooperation mode
         return false;
     }
 
-    /**
-     * Attempt to move the king away from the cat using best escape direction.
-     */
     static boolean tryKingEscape(RobotController rc, MapLocation catLocation) throws GameActionException {
         MapLocation kingLoc = rc.getLocation();
         int mapWidth = rc.getMapWidth();
         int mapHeight = rc.getMapHeight();
         MapInfo[] nearby = rc.senseNearbyMapInfos();
 
-        // Direction away from cat
         Direction awayDir = catLocation.directionTo(kingLoc);
         if (awayDir == Direction.CENTER) awayDir = Direction.NORTH;
 
@@ -589,15 +621,13 @@ public class RatKing {
             int currentDistSq = kingLoc.distanceSquaredTo(catLocation);
             int newDistSq = newLoc.distanceSquaredTo(catLocation);
 
-            // prefer moving away
             int score = 3 * (newDistSq - currentDistSq);
 
-            // penalty for edges (king is 3x3)
             if (newLoc.x <= 2 || newLoc.x >= mapWidth - 3 ||
                     newLoc.y <= 2 || newLoc.y >= mapHeight - 3) {
                 score -= 50;
             }
-            // penalty for dead-ends (few passable neighbors)
+
             int passableNeighbors = countPassableNeighbors(newLoc, nearby);
             if (passableNeighbors <= 1) {
                 score -= 80;
@@ -635,16 +665,12 @@ public class RatKing {
                 return info.isPassable();
             }
         }
-        return true; // unseen = assume passable
+        return true;
     }
 
-    /**
-     * Try to spawn a rat at any adjacent location.
-     */
     static void trySpawnRat(RobotController rc) throws GameActionException {
         MapLocation myLocation = rc.getLocation();
 
-        // Try all locations in a 5x5 around king center; canBuildRat will enforce legality
         for (int dx = -2; dx <= 2; dx++) {
             for (int dy = -2; dy <= 2; dy++) {
                 MapLocation spawnLoc = new MapLocation(myLocation.x + dx, myLocation.y + dy);

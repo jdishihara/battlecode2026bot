@@ -10,31 +10,34 @@ import static examplefuncsplayer.config.Constants.*;
 import static examplefuncsplayer.config.Shared.*;
 
 /**
- * ATTACKER baby rat: seeks enemy king, coordinates attacks via squeaking,
- * places offensive traps, and defends allied king when threatened.
+ * ATTACKER baby rat: CLUSTERED SYMMETRY SEARCH
  * 
- * Key improvements (v2):
- * - Multi-symmetry exploration: checks rotational, horizontal, AND vertical symmetry
- * - Different rats check different symmetry types (spreads the search)
- * - Broadcasts enemy king location when found (via squeak + shared array)
- * - Better coordination: all rats converge once king is located
- * - Squeak-based swarming: calls allies when enemy king found
- * - Offensive trap placement: traps enemy movement paths
- * - Defensive response: guards king when enemies detected nearby
- * - Gang-up tactics: attacks when sufficient allies present
+ * Key strategy:
+ * - ALL attackers search the SAME symmetry location together (cluster)
+ * - When the cluster confirms a symmetry is wrong, ALL switch to next symmetry
+ * - This keeps rats together for better combat when king is found
  * 
- * REQUIRED CONSTANTS (add to Constants.java if not present):
- *   public static final int ENEMY_KING_X_INDEX = 10;
- *   public static final int ENEMY_KING_Y_INDEX = 11;
- *   public static final int ENEMY_KING_SEEN_ROUND_INDEX = 12;
- *   public static final int CONFIRMED_SYMMETRY_INDEX = 13;  // 0=unknown, 1=rot, 2=horiz, 3=vert
+ * Symmetry elimination triggers:
+ * 1. Rat reaches predicted location and visually confirms no king
+ * 2. Rat detects impassable terrain at predicted location
+ * 3. Timeout: cluster has searched current symmetry for too long
+ * 4. Boundary detection: predicted location is off-map or inaccessible
+ * 
+ * Communication:
+ * - Shared array stores current symmetry target (so all rats converge)
+ * - Squeaks coordinate local movement and announce findings
+ * - When king found, all nearby rats swarm
+ * 
+ * BUG FIX: Now passes effectiveSymmetry to tryEliminateCurrentSymmetry()
+ * instead of relying on globalSymmetry (which baby rats can't write to).
  */
 public class BabyRatAttacker {
 
     // === SYMMETRY TYPES ===
-    private static final int SYM_ROTATIONAL = 0;   // (w-1-x, h-1-y)
-    private static final int SYM_HORIZONTAL = 1;   // (w-1-x, y) - flip across vertical axis
-    private static final int SYM_VERTICAL = 2;     // (x, h-1-y) - flip across horizontal axis
+    private static final int SYM_UNKNOWN = 0;
+    private static final int SYM_ROTATIONAL = 1;   // (w-1-x, h-1-y)
+    private static final int SYM_HORIZONTAL = 2;   // (w-1-x, y) - flip across vertical axis
+    private static final int SYM_VERTICAL = 3;     // (x, h-1-y) - flip across horizontal axis
 
     enum AttackState { SEEK, ATTACK, GUARD, SWARM }
 
@@ -42,9 +45,9 @@ public class BabyRatAttacker {
         MapLocation kingLocation = null;
 
         AttackState state = AttackState.SEEK;
-        MapLocation targetKingLoc = null;
+        MapLocation targetKingLoc = null;      // Confirmed enemy king location
         int turnsSinceKingSeen = 0;
-        MapLocation explorationTarget = null;
+        MapLocation currentTarget = null;       // Current movement target
         int turnsAtTarget = 0;
 
         // BUG nav memory
@@ -56,7 +59,6 @@ public class BabyRatAttacker {
         MapLocation prev2 = null;
 
         MapLocation mapCenter = null;
-        boolean hasReachedCenter = false;
 
         // Combat coordination
         int lastSqueakRound = -100;
@@ -64,21 +66,17 @@ public class BabyRatAttacker {
         MapLocation swarmTarget = null;
         int swarmStartRound = -100;
 
-        // === NEW: Multi-symmetry exploration ===
-        int assignedSymmetry = -1;       // Which symmetry this rat checks first (-1 = not assigned)
-        int currentSymmetryCheck = 0;    // Current symmetry being explored (0, 1, 2)
-        int symmetryCheckAttempts = 0;   // How many times we've switched symmetries
-        MapLocation[] possibleEnemyKingLocs = null;  // Cached possible locations
-        boolean[] symmetryEliminated = new boolean[3];  // Track which symmetries are impossible
-        int confirmedSymmetry = -1;      // -1 = unknown, 0/1/2 = confirmed type
+        // === CLUSTERED SYMMETRY SEARCH ===
+        MapLocation[] possibleEnemyKingLocs = null;  // [rot, horiz, vert] - indices 0,1,2
+        int localSymmetryEliminated = 0;             // Local bitmask of eliminated symmetries
+        int lastSymmetryChecked = 0;                 // Track which symmetry we last checked (for timeout reset)
+        boolean reachedCurrentTarget = false;        // Have we arrived at current symmetry target?
+        int roundsSearchingCurrentSymmetry = 0;      // How long we've searched current symmetry
 
         final Random rng;
         Mem(int id) {
             rng = new Random(9001L + id * 97L);
             bugLeft = ((id / 2) % 2 == 0);
-            // Assign different rats to check different symmetries first
-            assignedSymmetry = id % 3;
-            currentSymmetryCheck = assignedSymmetry;
         }
     }
 
@@ -97,39 +95,57 @@ public class BabyRatAttacker {
     public static void run(RobotController rc, int turnCount) throws GameActionException {
         Mem m = mem(rc);
         int roundNum = rc.getRoundNum();
+        MapLocation here = rc.getLocation();
 
         if (m.mapCenter == null) {
             m.mapCenter = new MapLocation(rc.getMapWidth() / 2, rc.getMapHeight() / 2);
         }
 
-        // Read our king location from shared array
+        // === READ OUR KING LOCATION ===
         int kx = rc.readSharedArray(KING_X_INDEX);
         int ky = rc.readSharedArray(KING_Y_INDEX);
         if (kx != 0 || ky != 0) {
             m.kingLocation = new MapLocation(kx, ky);
-            // Initialize possible enemy locations when we know our king's position
             if (m.possibleEnemyKingLocs == null) {
                 m.possibleEnemyKingLocs = computePossibleEnemyKingLocations(rc, m.kingLocation);
             }
         }
 
-        // === CHECK FOR CONFIRMED ENEMY KING LOCATION FROM SHARED ARRAY ===
-        checkSharedEnemyKingLocation(rc, m, roundNum);
+        // === READ GLOBAL SYMMETRY STATE ===
+        int globalSymmetry = rc.readSharedArray(CURRENT_SYMMETRY_INDEX);
+        int globalEliminated = rc.readSharedArray(SYMMETRY_ELIMINATED_INDEX);
 
-        // === CHECK FOR CONFIRMED SYMMETRY ===
-        checkConfirmedSymmetry(rc, m);
+        // Sync local eliminated state with global
+        m.localSymmetryEliminated |= globalEliminated;
+
+        // === COMPUTE EFFECTIVE SYMMETRY EARLY ===
+        // This is what we're ACTUALLY searching for, using local knowledge
+        int effectiveSymmetry = computeEffectiveSymmetry(globalSymmetry, m.localSymmetryEliminated);
+        
+        // Track how long we've been searching THIS symmetry (reset when symmetry changes)
+        if (effectiveSymmetry != m.lastSymmetryChecked) {
+            m.lastSymmetryChecked = effectiveSymmetry;
+            m.roundsSearchingCurrentSymmetry = 0;
+            m.reachedCurrentTarget = false;
+        }
+        m.roundsSearchingCurrentSymmetry++;
+
+        // === CHECK FOR CONFIRMED ENEMY KING IN SHARED ARRAY ===
+        MapLocation knownEnemyKing = readEnemyKingLocation(rc, roundNum);
+        if (knownEnemyKing != null) {
+            m.targetKingLoc = knownEnemyKing;
+            if (m.state == AttackState.SEEK) {
+                m.state = AttackState.ATTACK;
+            }
+        }
 
         // === PROCESS INCOMING SQUEAKS ===
         processIncomingSqueaks(rc, m, roundNum);
 
-        // === CHECK FOR SWARM TARGET FROM SHARED ARRAY ===
-        checkSharedSwarmTarget(rc, m, roundNum);
-
         // === GUARD MODE: Check if enemy rats near our king ===
         RobotInfo nearbyEnemyRatNearKing = findNearbyEnemyRatNearKing(rc, m);
-        if (nearbyEnemyRatNearKing != null) {
+        if (nearbyEnemyRatNearKing != null && m.state != AttackState.ATTACK) {
             m.state = AttackState.GUARD;
-            m.targetKingLoc = nearbyEnemyRatNearKing.getLocation();
             
             // Squeak for backup!
             if (roundNum - m.lastSqueakRound >= SQUEAK_COOLDOWN) {
@@ -145,16 +161,16 @@ public class BabyRatAttacker {
             return;
         }
 
-        // === FIND ENEMY KING ===
+        // === LOOK FOR ENEMY KING ===
         RobotInfo enemyKing = findEnemyKing(rc);
         if (enemyKing != null) {
             m.targetKingLoc = enemyKing.getLocation();
             m.turnsSinceKingSeen = 0;
             m.state = AttackState.ATTACK;
 
-            // Determine which symmetry this confirms
-            confirmSymmetryFromKingLocation(rc, m, enemyKing.getLocation());
-
+            // Confirm which symmetry this is
+            int confirmedSym = confirmSymmetryFromKingLocation(rc, m, enemyKing.getLocation());
+            
             // Squeak to summon allies!
             if (roundNum - m.lastSqueakRound >= SQUEAK_COOLDOWN) {
                 rc.squeak(SQUEAK_ENEMY_KING_FOUND);
@@ -170,30 +186,54 @@ public class BabyRatAttacker {
             }
         }
 
-        // === TRY TO ELIMINATE SYMMETRIES ===
-        // If we can see a location where enemy king SHOULD be but ISN'T, eliminate that symmetry
-        tryEliminateSymmetries(rc, m);
+        // === TRY TO ELIMINATE CURRENT SYMMETRY ===
+        // FIX: Pass effectiveSymmetry instead of relying on globalSymmetry
+        if (m.state == AttackState.SEEK && m.possibleEnemyKingLocs != null) {
+            tryEliminateCurrentSymmetry(rc, m, effectiveSymmetry, roundNum);
+        }
 
         // === STATE MACHINE ===
         switch (m.state) {
-            case SEEK:   runSeek(rc, m, roundNum); break;
+            case SEEK:   runSeek(rc, m, roundNum, effectiveSymmetry); break;
             case ATTACK: runAttack(rc, m, roundNum); break;
             case GUARD:  runGuard(rc, m, roundNum); break;
             case SWARM:  runSwarm(rc, m, roundNum); break;
         }
 
-        rc.setIndicatorString("ATK " + m.state +
-                " Sym:" + m.currentSymmetryCheck + 
-                (m.confirmedSymmetry >= 0 ? "(CONF)" : "") +
-                (m.bugging ? " BUG" + (m.bugLeft ? "L" : "R") : "") +
-                " | Tgt: " + (m.targetKingLoc != null ? m.targetKingLoc : "none") +
-                " | Elim:" + (m.symmetryEliminated[0]?"R":"") + (m.symmetryEliminated[1]?"H":"") + (m.symmetryEliminated[2]?"V":""));
+        // Debug indicator
+        String symStr = effectiveSymmetry == SYM_ROTATIONAL ? "ROT" : 
+                        effectiveSymmetry == SYM_HORIZONTAL ? "HOR" : 
+                        effectiveSymmetry == SYM_VERTICAL ? "VER" : "UNK";
+        String elimStr = ((m.localSymmetryEliminated & 1) != 0 ? "R" : "") +
+                         ((m.localSymmetryEliminated & 2) != 0 ? "H" : "") +
+                         ((m.localSymmetryEliminated & 4) != 0 ? "V" : "");
+        rc.setIndicatorString("ATK " + m.state + " | Sym:" + symStr + " Elim:" + elimStr +
+                " | Tgt:" + (m.currentTarget != null ? m.currentTarget : "none") +
+                " | r" + m.roundsSearchingCurrentSymmetry);
     }
 
     // ==================== SYMMETRY HELPERS ====================
 
     /**
+     * Compute the effective symmetry to search, using local elimination knowledge.
+     * This is separate from globalSymmetry because baby rats can't write to shared array.
+     */
+    static int computeEffectiveSymmetry(int globalSymmetry, int localEliminated) {
+        // If global symmetry is set and not eliminated locally, use it
+        if (globalSymmetry >= SYM_ROTATIONAL && globalSymmetry <= SYM_VERTICAL) {
+            int symBit = 1 << (globalSymmetry - 1);
+            if ((localEliminated & symBit) == 0) {
+                return globalSymmetry;
+            }
+        }
+        
+        // Otherwise, find first non-eliminated symmetry
+        return getNextValidSymmetry(localEliminated);
+    }
+
+    /**
      * Compute all 3 possible enemy king locations based on map symmetry types.
+     * Returns array indexed by (symmetry - 1): [0]=rotational, [1]=horizontal, [2]=vertical
      */
     static MapLocation[] computePossibleEnemyKingLocations(RobotController rc, MapLocation ourKing) {
         int w = rc.getMapWidth();
@@ -202,163 +242,238 @@ public class BabyRatAttacker {
         int ky = ourKing.y;
 
         return new MapLocation[] {
-            new MapLocation(w - 1 - kx, h - 1 - ky),  // Rotational (180°)
-            new MapLocation(w - 1 - kx, ky),          // Horizontal reflection (flip across vertical axis)
-            new MapLocation(kx, h - 1 - ky)           // Vertical reflection (flip across horizontal axis)
+            new MapLocation(w - 1 - kx, h - 1 - ky),  // [0] Rotational (180°)
+            new MapLocation(w - 1 - kx, ky),          // [1] Horizontal reflection
+            new MapLocation(kx, h - 1 - ky)           // [2] Vertical reflection
         };
     }
 
     /**
-     * Check shared array for confirmed enemy king location.
+     * Read enemy king location from shared array if recent.
      */
-    static void checkSharedEnemyKingLocation(RobotController rc, Mem m, int roundNum) throws GameActionException {
-        // Try to read enemy king location from shared array
-        // These indices need to be defined in Constants.java
-        int enemyKingX = 0;
-        int enemyKingY = 0;
-        int seenRound = 0;
-        
-        try {
-            enemyKingX = rc.readSharedArray(ENEMY_KING_X_INDEX);
-            enemyKingY = rc.readSharedArray(ENEMY_KING_Y_INDEX);
-            seenRound = rc.readSharedArray(ENEMY_KING_SEEN_ROUND_INDEX);
-        } catch (Exception e) {
-            // Constants not defined yet - that's ok
-            return;
-        }
+    static MapLocation readEnemyKingLocation(RobotController rc, int roundNum) throws GameActionException {
+        int enemyKingX = rc.readSharedArray(ENEMY_KING_X_INDEX);
+        int enemyKingY = rc.readSharedArray(ENEMY_KING_Y_INDEX);
+        int seenRound = rc.readSharedArray(ENEMY_KING_SEEN_ROUND_INDEX);
 
-        // If we have a recent sighting (within 50 rounds), use it
         if (enemyKingX > 0 && enemyKingY > 0) {
-            int roundsAgo = roundNum - seenRound;
-            if (roundsAgo < 0) roundsAgo += 2000; // Handle wrap
+            int roundsAgo = (roundNum % 1000) - seenRound;
+            if (roundsAgo < 0) roundsAgo += 1000;
             
             if (roundsAgo < 50) {
-                MapLocation knownLoc = new MapLocation(enemyKingX, enemyKingY);
-                if (m.state == AttackState.SEEK) {
-                    m.targetKingLoc = knownLoc;
-                    m.state = AttackState.ATTACK;
-                    m.turnsSinceKingSeen = roundsAgo;
-                }
+                return new MapLocation(enemyKingX, enemyKingY);
             }
         }
-    }
-
-    /**
-     * Check if symmetry has been confirmed by another rat.
-     */
-    static void checkConfirmedSymmetry(RobotController rc, Mem m) throws GameActionException {
-        try {
-            int confirmed = rc.readSharedArray(CONFIRMED_SYMMETRY_INDEX);
-            if (confirmed > 0 && confirmed <= 3) {
-                m.confirmedSymmetry = confirmed - 1; // 1-indexed in array, 0-indexed internally
-                m.currentSymmetryCheck = m.confirmedSymmetry;
-                
-                // Eliminate other symmetries
-                for (int i = 0; i < 3; i++) {
-                    if (i != m.confirmedSymmetry) {
-                        m.symmetryEliminated[i] = true;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            // Constants not defined yet
-        }
+        return null;
     }
 
     /**
      * When we find the enemy king, figure out which symmetry type the map uses.
+     * Returns the confirmed symmetry type (1, 2, or 3), or 0 if can't determine.
      */
-    static void confirmSymmetryFromKingLocation(RobotController rc, Mem m, MapLocation enemyKingLoc) {
-        if (m.possibleEnemyKingLocs == null || m.confirmedSymmetry >= 0) return;
+    static int confirmSymmetryFromKingLocation(RobotController rc, Mem m, MapLocation enemyKingLoc) {
+        if (m.possibleEnemyKingLocs == null) return 0;
 
-        // Check which symmetry prediction was closest to actual location
-        // King is 3x3, so we check if the center is within ~2 tiles of prediction
+        // King is 3x3, so check if actual location is close to any prediction
         for (int i = 0; i < 3; i++) {
-            if (enemyKingLoc.distanceSquaredTo(m.possibleEnemyKingLocs[i]) <= 8) {
-                m.confirmedSymmetry = i;
-                // Eliminate other symmetries
+            if (enemyKingLoc.distanceSquaredTo(m.possibleEnemyKingLocs[i]) <= KING_SEARCH_RADIUS) {
+                int symType = i + 1; // Convert to 1-indexed
+                
+                // Mark other symmetries as eliminated
                 for (int j = 0; j < 3; j++) {
-                    m.symmetryEliminated[j] = (j != i);
+                    if (j != i) {
+                        m.localSymmetryEliminated |= (1 << j);
+                    }
                 }
-                break;
+                return symType;
             }
         }
+        return 0;
     }
 
     /**
-     * If we can see where enemy king SHOULD be but they're NOT there, eliminate that symmetry.
+     * Try to eliminate the current symmetry if we can prove it's wrong.
+     * FIX: Now takes effectiveSymmetry as parameter instead of reading globalSymmetry.
+     * 
+     * STRICT ELIMINATION: Rats must get VERY close (adjacent or nearly adjacent)
+     * to the predicted king location before eliminating. This ensures they travel
+     * all the way to corners if needed.
      */
-    static void tryEliminateSymmetries(RobotController rc, Mem m) throws GameActionException {
-        if (m.possibleEnemyKingLocs == null || m.confirmedSymmetry >= 0) return;
+    static void tryEliminateCurrentSymmetry(RobotController rc, Mem m, int effectiveSymmetry, int roundNum) 
+            throws GameActionException {
+        
+        // FIX: Use effectiveSymmetry parameter instead of globalSymmetry
+        if (effectiveSymmetry < SYM_ROTATIONAL || effectiveSymmetry > SYM_VERTICAL) return;
+        
+        int symIndex = effectiveSymmetry - 1; // Convert to 0-indexed
+        if ((m.localSymmetryEliminated & (1 << symIndex)) != 0) return; // Already eliminated
+        
+        MapLocation predicted = m.possibleEnemyKingLocs[symIndex];
+        MapLocation here = rc.getLocation();
+        int distToPredicted = here.distanceSquaredTo(predicted);
+        
+        boolean shouldEliminate = false;
+        String reason = "";
 
-        for (int i = 0; i < 3; i++) {
-            if (m.symmetryEliminated[i]) continue;
+        // === CONDITION 1: Predicted location is too close to boundary for 3x3 king ===
+        // Check this first since it doesn't require being close
+        int w = rc.getMapWidth();
+        int h = rc.getMapHeight();
+        // King center must be at least 1 tile from edge (king is 3x3)
+        if (predicted.x < 1 || predicted.x >= w - 1 || 
+            predicted.y < 1 || predicted.y >= h - 1) {
+            shouldEliminate = true;
+            reason = "boundary_impossible";
+        }
 
-            MapLocation predicted = m.possibleEnemyKingLocs[i];
+        // === CONDITION 2: Predicted center is blocked by wall ===
+        // Can check from distance if we can sense it
+        if (!shouldEliminate && rc.canSenseLocation(predicted)) {
+            MapInfo info = rc.senseMapInfo(predicted);
+            if (info.isWall()) {
+                shouldEliminate = true;
+                reason = "wall_blocked";
+            }
+        }
+
+        // === CONDITION 3: STRICT - Must be VERY close to eliminate ===
+        // Only eliminate if we're within 2 tiles (distSq <= 8) of the predicted CENTER
+        // This ensures rats go ALL THE WAY to corners
+        if (!shouldEliminate && distToPredicted <= 8) {
+            m.reachedCurrentTarget = true;
             
-            // Can we see this location?
-            if (rc.canSenseLocation(predicted)) {
-                // Check if there's an enemy king at or near this location (3x3 area)
-                boolean foundKing = false;
-                
-                // Check center and surrounding tiles for the 3x3 king
-                for (int dx = -1; dx <= 1 && !foundKing; dx++) {
-                    for (int dy = -1; dy <= 1 && !foundKing; dy++) {
-                        MapLocation checkLoc = new MapLocation(predicted.x + dx, predicted.y + dy);
-                        if (rc.canSenseLocation(checkLoc)) {
-                            RobotInfo robot = rc.senseRobotAtLocation(checkLoc);
-                            if (robot != null && 
-                                robot.getType() == UnitType.RAT_KING && 
-                                robot.getTeam() == rc.getTeam().opponent()) {
-                                foundKing = true;
-                            }
+            // We're right next to where the king should be - check thoroughly
+            boolean foundEnemyKing = false;
+            int tilesChecked = 0;
+            
+            // Check the entire 3x3 area where king would be
+            for (int dx = -1; dx <= 1 && !foundEnemyKing; dx++) {
+                for (int dy = -1; dy <= 1 && !foundEnemyKing; dy++) {
+                    MapLocation checkLoc = new MapLocation(predicted.x + dx, predicted.y + dy);
+                    if (rc.canSenseLocation(checkLoc)) {
+                        tilesChecked++;
+                        RobotInfo robot = rc.senseRobotAtLocation(checkLoc);
+                        if (robot != null && 
+                            robot.getType() == UnitType.RAT_KING && 
+                            robot.getTeam() == rc.getTeam().opponent()) {
+                            foundEnemyKing = true;
                         }
                     }
                 }
-                
-                // If we can see the entire predicted area and no king, eliminate this symmetry
-                if (!foundKing) {
-                    boolean canSeeAll = true;
-                    for (int dx = -1; dx <= 1 && canSeeAll; dx++) {
-                        for (int dy = -1; dy <= 1 && canSeeAll; dy++) {
-                            MapLocation checkLoc = new MapLocation(predicted.x + dx, predicted.y + dy);
-                            if (!rc.canSenseLocation(checkLoc)) {
-                                canSeeAll = false;
-                            }
-                        }
-                    }
-                    if (canSeeAll) {
-                        m.symmetryEliminated[i] = true;
-                        
-                        // If this was our current target, switch to another
-                        if (m.currentSymmetryCheck == i) {
-                            switchToNextSymmetry(m);
+            }
+            
+            // Must have checked ALL 9 tiles of the 3x3 area to be sure
+            if (!foundEnemyKing && tilesChecked >= 9) {
+                shouldEliminate = true;
+                reason = "confirmed_empty";
+            }
+            // If we checked at least 6 tiles and we're adjacent, that's good enough
+            else if (!foundEnemyKing && tilesChecked >= 6 && distToPredicted <= 2) {
+                shouldEliminate = true;
+                reason = "adjacent_empty";
+            }
+        }
+        
+        // === CONDITION 4: We're close (within 4 tiles) and can see the ENTIRE 3x3 area is empty ===
+        if (!shouldEliminate && distToPredicted <= 16) {
+            boolean foundKing = false;
+            int tilesChecked = 0;
+            
+            for (int dx = -1; dx <= 1 && !foundKing; dx++) {
+                for (int dy = -1; dy <= 1 && !foundKing; dy++) {
+                    MapLocation checkLoc = new MapLocation(predicted.x + dx, predicted.y + dy);
+                    if (rc.canSenseLocation(checkLoc)) {
+                        tilesChecked++;
+                        RobotInfo robot = rc.senseRobotAtLocation(checkLoc);
+                        if (robot != null && 
+                            robot.getType() == UnitType.RAT_KING && 
+                            robot.getTeam() == rc.getTeam().opponent()) {
+                            foundKing = true;
                         }
                     }
                 }
+            }
+            
+            // Only eliminate if we checked ALL 9 tiles
+            if (!foundKing && tilesChecked >= 9) {
+                shouldEliminate = true;
+                reason = "visual_confirm_all9";
+                m.reachedCurrentTarget = true;
+            }
+        }
+
+        // === CONDITION 5: Timeout - but ONLY if we've actually reached the target ===
+        // Much longer timeout, and require being close
+        int timeoutThreshold = SYMMETRY_SEARCH_TIMEOUT * 2; // Double the timeout
+        
+        if (!shouldEliminate && m.roundsSearchingCurrentSymmetry > timeoutThreshold) {
+            // Only timeout-eliminate if we actually got close
+            if (m.reachedCurrentTarget && distToPredicted <= 16) {
+                shouldEliminate = true;
+                reason = "timeout_at_target";
+            }
+            // Or if we've been searching for a VERY long time and are reasonably close
+            else if (m.roundsSearchingCurrentSymmetry > timeoutThreshold * 2 && distToPredicted <= 50) {
+                shouldEliminate = true;
+                reason = "timeout_extended";
+            }
+        }
+
+        // === ELIMINATE THIS SYMMETRY ===
+        if (shouldEliminate) {
+            m.localSymmetryEliminated |= (1 << symIndex);
+            
+            // Squeak to notify nearby allies
+            if (roundNum - m.lastSqueakRound >= SQUEAK_COOLDOWN / 2) {
+                rc.squeak(SQUEAK_SYMMETRY_ELIMINATED + (symIndex * 10));
+                m.lastSqueakRound = roundNum;
             }
         }
     }
 
     /**
-     * Switch to the next non-eliminated symmetry to explore.
+     * Get the current symmetry target location.
      */
-    static void switchToNextSymmetry(Mem m) {
-        for (int attempts = 0; attempts < 3; attempts++) {
-            m.currentSymmetryCheck = (m.currentSymmetryCheck + 1) % 3;
-            if (!m.symmetryEliminated[m.currentSymmetryCheck]) {
-                m.symmetryCheckAttempts++;
-                m.turnsAtTarget = 0;
-                return;
+    static MapLocation getCurrentSymmetryTarget(Mem m, int effectiveSymmetry) {
+        if (m.possibleEnemyKingLocs == null || effectiveSymmetry < SYM_ROTATIONAL) {
+            return m.mapCenter;
+        }
+        
+        int symIndex = effectiveSymmetry - 1;
+        
+        // If current symmetry is eliminated, find first non-eliminated
+        if ((m.localSymmetryEliminated & (1 << symIndex)) != 0) {
+            for (int i = 0; i < 3; i++) {
+                if ((m.localSymmetryEliminated & (1 << i)) == 0) {
+                    return m.possibleEnemyKingLocs[i];
+                }
             }
         }
-        // All symmetries eliminated (shouldn't happen), reset to 0
-        m.currentSymmetryCheck = 0;
+        
+        return m.possibleEnemyKingLocs[symIndex];
+    }
+
+    /**
+     * Get the next symmetry to try after current one is eliminated.
+     */
+    static int getNextSymmetry(int current, int eliminated) {
+        // Try symmetries in order: rotational -> horizontal -> vertical
+        int[] order = {SYM_ROTATIONAL, SYM_HORIZONTAL, SYM_VERTICAL};
+        
+        for (int sym : order) {
+            int bit = 1 << (sym - 1);
+            if ((eliminated & bit) == 0) {
+                return sym;
+            }
+        }
+        
+        // All eliminated? Return rotational as fallback
+        return SYM_ROTATIONAL;
     }
 
     // ==================== STATE IMPLEMENTATIONS ====================
 
-    static void runSeek(RobotController rc, Mem m, int roundNum) throws GameActionException {
+    static void runSeek(RobotController rc, Mem m, int roundNum, int effectiveSymmetry) throws GameActionException {
         MapLocation here = rc.getLocation();
 
         // If we have a swarm target, go there
@@ -368,82 +483,65 @@ public class BabyRatAttacker {
             return;
         }
 
-        // If we have a known enemy king location (from shared array or previous sighting)
+        // If we already know enemy king location, go there
         if (m.targetKingLoc != null) {
+            m.currentTarget = m.targetKingLoc;
             attackerMoveToward(rc, m, m.targetKingLoc);
             return;
         }
 
-        // Pick exploration target based on symmetry
-        if (m.explorationTarget == null ||
-                here.distanceSquaredTo(m.explorationTarget) <= 9 ||
-                m.turnsAtTarget > MAX_TARGET_PURSUIT_TURNS) {
-            
-            m.explorationTarget = pickSymmetryAwareTarget(rc, m);
-            m.turnsAtTarget = 0;
-            
-            // If we've been searching too long, try another symmetry
-            if (m.symmetryCheckAttempts > 0 && m.turnsAtTarget == 0) {
-                // Already switched in pickSymmetryAwareTarget
-            }
+        // === CLUSTERED SYMMETRY SEARCH ===
+        // FIX: effectiveSymmetry is now passed in, already computed with local knowledge
+        
+        // Get target location for this symmetry
+        MapLocation symmetryTarget;
+        if (m.possibleEnemyKingLocs != null && effectiveSymmetry >= SYM_ROTATIONAL && effectiveSymmetry <= SYM_VERTICAL) {
+            symmetryTarget = m.possibleEnemyKingLocs[effectiveSymmetry - 1];
+        } else {
+            symmetryTarget = m.mapCenter;
+        }
+        
+        int distToTarget = here.distanceSquaredTo(symmetryTarget);
+        
+        // Only spread out when FAR from target (> 10 tiles away)
+        // When close, converge on the exact location to properly check corners
+        MapLocation moveTarget;
+        if (distToTarget > 100) {
+            // Far away - add slight spread to avoid traffic jams
+            int spreadX = (rc.getID() % 5) - 2;  // -2 to +2 (smaller spread)
+            int spreadY = ((rc.getID() / 5) % 5) - 2;
+            moveTarget = new MapLocation(
+                Math.max(2, Math.min(rc.getMapWidth() - 3, symmetryTarget.x + spreadX)),
+                Math.max(2, Math.min(rc.getMapHeight() - 3, symmetryTarget.y + spreadY))
+            );
+        } else {
+            // Close to target - go directly to the predicted location
+            // This ensures rats actually reach corners
+            moveTarget = symmetryTarget;
+        }
+        
+        m.currentTarget = moveTarget;
+
+        // Check if we've reached the target area (within 3 tiles)
+        if (distToTarget <= 9) {
+            m.reachedCurrentTarget = true;
         }
 
-        m.turnsAtTarget++;
-        attackerMoveToward(rc, m, m.explorationTarget);
+        // Debug: show which symmetry we're actually heading to
+        rc.setIndicatorLine(here, symmetryTarget, 255, 255, 0); // Yellow line to target
+
+        attackerMoveToward(rc, m, moveTarget);
     }
 
     /**
-     * Pick exploration target using multi-symmetry awareness.
+     * Get the next valid (non-eliminated) symmetry to check.
      */
-    static MapLocation pickSymmetryAwareTarget(RobotController rc, Mem m) {
-        int w = rc.getMapWidth();
-        int h = rc.getMapHeight();
-        MapLocation here = rc.getLocation();
-
-        // Head toward center first to get vision of the map
-        if (!m.hasReachedCenter && m.mapCenter != null && here.distanceSquaredTo(m.mapCenter) > 100) {
-            return m.mapCenter;
-        }
-        m.hasReachedCenter = true;
-
-        // If we have possible enemy locations from our king's position
-        if (m.possibleEnemyKingLocs != null) {
-            // If symmetry is confirmed, go directly there
-            if (m.confirmedSymmetry >= 0) {
-                MapLocation target = m.possibleEnemyKingLocs[m.confirmedSymmetry];
-                // Add slight randomness to avoid all rats clustering on exact spot
-                int offX = m.rng.nextInt(5) - 2;
-                int offY = m.rng.nextInt(5) - 2;
-                return clampToMap(rc, target.x + offX, target.y + offY);
-            }
-
-            // Check if we should switch to a different symmetry
-            if (m.turnsAtTarget > MAX_TARGET_PURSUIT_TURNS / 2 && m.symmetryCheckAttempts < 6) {
-                switchToNextSymmetry(m);
-            }
-
-            // Go to current symmetry prediction
-            MapLocation target = m.possibleEnemyKingLocs[m.currentSymmetryCheck];
-            
-            // Add randomness to spread out rats
-            int offX = m.rng.nextInt(9) - 4;
-            int offY = m.rng.nextInt(9) - 4;
-            return clampToMap(rc, target.x + offX, target.y + offY);
-        }
-
-        // Fallback if we don't know our king location yet
-        // Send to opposite quadrant
-        int tx = (here.x < w / 2) ? w - 5 : 5;
-        int ty = (here.y < h / 2) ? h - 5 : 5;
-        return new MapLocation(tx, ty);
-    }
-
-    static MapLocation clampToMap(RobotController rc, int x, int y) {
-        int w = rc.getMapWidth();
-        int h = rc.getMapHeight();
-        x = Math.max(3, Math.min(w - 4, x));
-        y = Math.max(3, Math.min(h - 4, y));
-        return new MapLocation(x, y);
+    static int getNextValidSymmetry(int eliminated) {
+        // Priority: rotational -> horizontal -> vertical
+        if ((eliminated & 1) == 0) return SYM_ROTATIONAL;  // bit 0 = rotational
+        if ((eliminated & 2) == 0) return SYM_HORIZONTAL;  // bit 1 = horizontal
+        if ((eliminated & 4) == 0) return SYM_VERTICAL;    // bit 2 = vertical
+        return SYM_ROTATIONAL; // All eliminated, default
     }
 
     static void runAttack(RobotController rc, Mem m, int roundNum) throws GameActionException {
@@ -460,11 +558,9 @@ public class BabyRatAttacker {
         boolean shouldGangUp = alliesNearby >= GANG_UP_THRESHOLD;
 
         // === TRY TO BITE ENEMY KING ===
-        // King is 3x3, so check all 9 tiles
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
                 MapLocation tile = new MapLocation(center.x + dx, center.y + dy);
-                // Spend more cheese if we have allies (gang up!)
                 int spend = shouldGangUp ? 
                     Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
                     Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
@@ -475,7 +571,7 @@ public class BabyRatAttacker {
             }
         }
 
-        // === ALSO ATTACK ENEMY BABY RATS NEAR THEIR KING ===
+        // === ALSO ATTACK ENEMY BABY RATS ===
         RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
         for (RobotInfo enemy : enemies) {
             if (enemy.getType() == UnitType.BABY_RAT) {
@@ -497,6 +593,7 @@ public class BabyRatAttacker {
         }
 
         // === MOVE TOWARD TARGET ===
+        m.currentTarget = m.targetKingLoc;
         attackerMoveToward(rc, m, m.targetKingLoc);
     }
 
@@ -519,7 +616,7 @@ public class BabyRatAttacker {
         }
 
         if (closestEnemy != null) {
-            // === PLACE DEFENSIVE TRAP BETWEEN ENEMY AND OUR KING ===
+            // Place defensive trap
             if (m.kingLocation != null && 
                 rc.getGlobalCheese() >= RAT_TRAP_COST + 50 &&
                 roundNum - m.lastTrapRound >= 10) {
@@ -533,20 +630,21 @@ public class BabyRatAttacker {
                 }
             }
 
-            // === ATTACK THE ENEMY ===
+            // Attack the enemy
             int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
             if (rc.canAttack(closestEnemy.getLocation(), spend)) {
                 rc.attack(closestEnemy.getLocation(), spend);
                 return;
             }
 
-            // Move toward enemy to attack
+            m.currentTarget = closestEnemy.getLocation();
             attackerMoveToward(rc, m, closestEnemy.getLocation());
             return;
         }
 
-        // No nearby enemy rats - return to patrol near king or seek
+        // No enemies - return to king or resume seeking
         if (m.kingLocation != null && here.distanceSquaredTo(m.kingLocation) > 50) {
+            m.currentTarget = m.kingLocation;
             attackerMoveToward(rc, m, m.kingLocation);
         } else {
             m.state = AttackState.SEEK;
@@ -554,9 +652,7 @@ public class BabyRatAttacker {
     }
 
     static void runSwarm(RobotController rc, Mem m, int roundNum) throws GameActionException {
-        // Move toward swarm target
         if (m.swarmTarget == null || roundNum - m.swarmStartRound > 30) {
-            // Swarm expired
             m.state = AttackState.SEEK;
             m.swarmTarget = null;
             return;
@@ -564,7 +660,7 @@ public class BabyRatAttacker {
 
         MapLocation here = rc.getLocation();
 
-        // If we arrived at swarm target, look for enemy king
+        // If we arrived, look for enemy king
         if (here.distanceSquaredTo(m.swarmTarget) <= 16) {
             RobotInfo enemyKing = findEnemyKing(rc);
             if (enemyKing != null) {
@@ -574,7 +670,7 @@ public class BabyRatAttacker {
                 confirmSymmetryFromKingLocation(rc, m, enemyKing.getLocation());
                 return;
             }
-            // No king found at swarm location - search briefly then give up
+            
             if (roundNum - m.swarmStartRound > 15) {
                 m.state = AttackState.SEEK;
                 m.swarmTarget = null;
@@ -582,7 +678,7 @@ public class BabyRatAttacker {
             }
         }
 
-        // Attack any enemies we encounter on the way
+        // Attack enemies on the way
         RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
         for (RobotInfo enemy : enemies) {
             int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
@@ -592,6 +688,7 @@ public class BabyRatAttacker {
             }
         }
 
+        m.currentTarget = m.swarmTarget;
         attackerMoveToward(rc, m, m.swarmTarget);
     }
 
@@ -609,9 +706,17 @@ public class BabyRatAttacker {
                 continue;
             }
 
+            // Handle symmetry elimination broadcast
+            if (content >= SQUEAK_SYMMETRY_ELIMINATED && content < SQUEAK_SYMMETRY_ELIMINATED + 30) {
+                int eliminatedSym = (content - SQUEAK_SYMMETRY_ELIMINATED) / 10;
+                if (eliminatedSym >= 0 && eliminatedSym < 3) {
+                    m.localSymmetryEliminated |= (1 << eliminatedSym);
+                }
+                continue;
+            }
+
             switch (content) {
                 case SQUEAK_ENEMY_KING_FOUND:
-                    // Rush to help attack enemy king!
                     if (m.state == AttackState.SEEK || m.state == AttackState.SWARM) {
                         m.swarmTarget = senderLoc;
                         m.swarmStartRound = roundNum;
@@ -620,14 +725,13 @@ public class BabyRatAttacker {
                     break;
 
                 case SQUEAK_ENEMY_ATTACKING_KING:
-                    // Our king is under attack - switch to guard!
                     if (m.state != AttackState.ATTACK) {
                         m.state = AttackState.GUARD;
                     }
                     break;
 
                 case SQUEAK_NEED_BACKUP:
-                    // General backup request
+                case SQUEAK_RALLY_TO_ME:
                     if (m.state == AttackState.SEEK) {
                         m.swarmTarget = senderLoc;
                         m.swarmStartRound = roundNum;
@@ -636,30 +740,10 @@ public class BabyRatAttacker {
                     break;
 
                 case SQUEAK_RETREAT:
-                    // Flee toward our king
                     if (m.kingLocation != null) {
-                        m.explorationTarget = m.kingLocation;
+                        m.currentTarget = m.kingLocation;
                     }
                     break;
-            }
-        }
-    }
-
-    static void checkSharedSwarmTarget(RobotController rc, Mem m, int roundNum) throws GameActionException {
-        // Check if king has broadcast a swarm target
-        int swarmX = rc.readSharedArray(SWARM_TARGET_X);
-        int swarmY = rc.readSharedArray(SWARM_TARGET_Y);
-        int swarmRound = rc.readSharedArray(SWARM_ACTIVE_ROUND);
-
-        if (swarmX > 0 && swarmY > 0) {
-            // Check if swarm is recent (within 20 rounds)
-            int roundDiff = (roundNum % 1000) - swarmRound;
-            if (roundDiff < 0) roundDiff += 1000;
-            
-            if (roundDiff < 20 && m.state == AttackState.SEEK) {
-                m.swarmTarget = new MapLocation(swarmX, swarmY);
-                m.swarmStartRound = roundNum;
-                m.state = AttackState.SWARM;
             }
         }
     }
@@ -670,30 +754,15 @@ public class BabyRatAttacker {
             throws GameActionException {
         MapLocation here = rc.getLocation();
         
-        // Predict enemy king's retreat direction (toward their spawn)
         int mapW = rc.getMapWidth();
         int mapH = rc.getMapHeight();
         
-        // Use confirmed symmetry to better predict retreat direction
-        MapLocation enemySpawn = null;
-        if (m.kingLocation != null) {
-            if (m.confirmedSymmetry == SYM_ROTATIONAL) {
-                enemySpawn = new MapLocation(mapW - 1 - m.kingLocation.x, mapH - 1 - m.kingLocation.y);
-            } else if (m.confirmedSymmetry == SYM_HORIZONTAL) {
-                enemySpawn = new MapLocation(mapW - 1 - m.kingLocation.x, m.kingLocation.y);
-            } else if (m.confirmedSymmetry == SYM_VERTICAL) {
-                enemySpawn = new MapLocation(m.kingLocation.x, mapH - 1 - m.kingLocation.y);
-            } else {
-                // Unknown symmetry, use rotational as default
-                enemySpawn = new MapLocation(mapW - 1 - m.kingLocation.x, mapH - 1 - m.kingLocation.y);
-            }
-        } else {
-            enemySpawn = new MapLocation(mapW / 2, mapH / 2);
-        }
+        // Predict retreat direction
+        MapLocation enemySpawn = m.possibleEnemyKingLocs != null ? 
+            m.possibleEnemyKingLocs[0] : new MapLocation(mapW / 2, mapH / 2);
         
         Direction retreatDir = enemyKingCenter.directionTo(enemySpawn);
         
-        // Try to place trap in retreat path
         Direction[] trapDirs = {
             retreatDir,
             retreatDir.rotateLeft(),
@@ -716,7 +785,6 @@ public class BabyRatAttacker {
             }
         }
         
-        // Fallback: place trap adjacent to us toward enemy
         Direction toEnemy = here.directionTo(enemyKingCenter);
         MapLocation fallbackLoc = here.add(toEnemy);
         if (rc.canPlaceRatTrap(fallbackLoc)) {
@@ -789,7 +857,7 @@ public class BabyRatAttacker {
         for (RobotInfo r : nearby) {
             if (r.getTeam() == enemy && r.getType() == UnitType.BABY_RAT) {
                 int distToKing = r.getLocation().distanceSquaredTo(m.kingLocation);
-                if (distToKing <= 100) { // Within 10 units of king
+                if (distToKing <= 100) {
                     return r;
                 }
             }
@@ -806,7 +874,7 @@ public class BabyRatAttacker {
         return count;
     }
 
-    // ==================== NAVIGATION (BUG + anti-oscillation) ====================
+    // ==================== NAVIGATION ====================
 
     static boolean attackerMoveToward(RobotController rc, Mem m, MapLocation target) throws GameActionException {
         if (target == null) return false;
@@ -887,7 +955,8 @@ public class BabyRatAttacker {
         return false;
     }
 
-    static boolean tryMoveDirAvoidRecent(RobotController rc, Mem m, Direction dir, MapLocation oldLoc) throws GameActionException {
+    static boolean tryMoveDirAvoidRecent(RobotController rc, Mem m, Direction dir, MapLocation oldLoc) 
+            throws GameActionException {
         if (dir == null || dir == Direction.CENTER) return false;
 
         MapLocation next = oldLoc.add(dir);
@@ -897,7 +966,7 @@ public class BabyRatAttacker {
             return false;
         }
 
-        // Avoid occupied tiles (robots)
+        // Avoid occupied tiles
         if (rc.canSenseLocation(next)) {
             RobotInfo at = rc.senseRobotAtLocation(next);
             if (at != null) return false;

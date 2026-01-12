@@ -36,7 +36,7 @@ public final class Constants {
     public static final int DEFENSIVE_TRAP_RADIUS = 2;
     public static final int KING_ATTACK_CHEESE_BOOST = 50;
 
-    // ===== COMBAT & SWARMING (NEW) =====
+    // ===== COMBAT & SWARMING =====
     public static final int SQUEAK_COOLDOWN = 8;              // Rounds between squeaks (avoid cat attention)
     public static final int SQUEAK_LISTEN_ROUNDS = 5;         // How far back to read messages
     public static final int SWARM_RESPONSE_DISTANCE_SQ = 400; // Respond to squeaks within 20 units
@@ -46,10 +46,16 @@ public final class Constants {
     public static final int RAT_TRAP_COST = 30;               // From spec
     public static final int RAT_TRAP_DAMAGE = 50;             // From spec
     public static final int GANG_UP_THRESHOLD = 3;            // Attack if 3+ allies nearby
-    public static final int COORDINATED_ATTACK_RADIUS = 16; 
-  
-       // 0=unknown, 1=rotational, 2=horizontal, 3=vertical
-  // Check for allies in this radius
+    public static final int COORDINATED_ATTACK_RADIUS = 16;   // Check for allies in this radius
+
+    // ===== CLUSTERED SYMMETRY SEARCH (NEW) =====
+    public static final int SYMMETRY_SEARCH_TIMEOUT = 50;     // Rounds before switching symmetry (was 80)
+    public static final int CLUSTER_SPREAD_RADIUS = 5;        // How much to spread around target
+    public static final int MIN_RATS_TO_SWITCH = 2;           // Min rats that must confirm before switch
+    public static final int BOUNDARY_MARGIN = 4;              // Tiles from edge to consider "at boundary"
+    public static final int KING_SEARCH_RADIUS = 16;          // How close to predicted loc to search (increased)
+    public static final int CLUSTER_RALLY_DISTANCE_SQ = 100;  // Rally if further than 10 tiles from target
+    public static final int REGROUP_THRESHOLD = 40;           // Rounds at target before regrouping
 
     // ===== SQUEAK MESSAGE TYPES =====
     // Encoded in the squeak's messageContent integer
@@ -58,6 +64,8 @@ public final class Constants {
     public static final int SQUEAK_ENEMY_ATTACKING_KING = 3;
     public static final int SQUEAK_RETREAT = 4;
     public static final int SQUEAK_TRAP_PLACED = 5;
+    public static final int SQUEAK_SYMMETRY_ELIMINATED = 6;   // NEW: broadcast symmetry elimination
+    public static final int SQUEAK_RALLY_TO_ME = 7;           // NEW: call cluster to regroup
 
     // ===== DIRT DIGGING =====
     public static final int DIG_MIN_CHEESE_HAULER = 500;
