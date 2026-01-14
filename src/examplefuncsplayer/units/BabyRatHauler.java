@@ -12,8 +12,22 @@ import static examplefuncsplayer.config.Shared.*;
 /**
  * HAULER baby rat: cheese collection FSM + cat-aware safety + enemy rat awareness + early deposit.
  * Uses per-robot memory (keyed by rc.getID()) to avoid static state collisions.
+ * 
+ * NEW: Mine sharing system - rats report discovered mines to king via squeak,
+ * king broadcasts to shared array, rats distribute across known mines.
  */
 public class BabyRatHauler {
+
+    // ===== SHARED ARRAY SLOTS FOR MINES =====
+    // Add these to your Constants.java:
+    // public static final int MINE_COUNT_SLOT = 9;
+    // public static final int MINE_START_SLOT = 10;  // Slots 10-25 for up to 8 mines (2 slots each: x, y)
+    // public static final int MAX_KNOWN_MINES = 8;
+    
+    // Temporary definitions (move to Constants.java)
+    private static final int MINE_COUNT_SLOT = 9;
+    private static final int MINE_START_SLOT = 10;
+    private static final int MAX_KNOWN_MINES = 8;
 
     // ===== HAULER STATE MACHINE =====
     enum RatState { EXPLORE, COLLECT, RETURN, DELIVER, FLEE }
@@ -60,6 +74,11 @@ public class BabyRatHauler {
         MapLocation lastStuckLocation = null;
         int consecutiveFailedMoves = 0;
 
+        // NEW: Mine tracking
+        MapLocation lastSeenMine = null;       // Most recent mine this rat discovered
+        MapLocation assignedMine = null;       // Mine this rat is assigned to harvest
+        int assignedMineCheckRound = -100;     // Last round we checked shared array for assignment
+
         final Random rng;
         Mem(int id) { 
             rng = new Random(6147L + id * 31L);
@@ -95,6 +114,12 @@ public class BabyRatHauler {
 
         // track recent positions
         updateRecentLocations(m, rc.getLocation());
+
+        // ===== UPDATE ASSIGNED MINE PERIODICALLY =====
+        if (rc.getRoundNum() - m.assignedMineCheckRound > 50) {
+            m.assignedMine = getAssignedMine(rc, m);
+            m.assignedMineCheckRound = rc.getRoundNum();
+        }
 
         // ===== COMPUTE THREAT (CATS + ENEMY RATS) ONCE PER TURN =====
         ThreatInfo threat = computeThreat(rc, m);
@@ -141,7 +166,42 @@ public class BabyRatHauler {
             case FLEE:    runFlee(rc, m, threat); break;
         }
 
-        rc.setIndicatorString("HAULER " + m.currentState + " | Raw:" + rc.getRawCheese() + " | Threat:" + threat.level);
+        rc.setIndicatorString("HAULER " + m.currentState + " | Raw:" + rc.getRawCheese() + " | Mine:" + (m.assignedMine != null ? m.assignedMine.toString() : "none"));
+    }
+
+    // ===== MINE ASSIGNMENT SYSTEM =====
+
+    /**
+     * Get this rat's assigned mine from the shared array.
+     * Distributes rats across known mines based on robot ID.
+     * Rotates assignment every 200 rounds to prevent permanent crowding.
+     */
+    static MapLocation getAssignedMine(RobotController rc, Mem m) throws GameActionException {
+        int mineCount = rc.readSharedArray(MINE_COUNT_SLOT);
+        
+        if (mineCount == 0) return null;
+        
+        // Rotate assignment every 200 rounds to redistribute rats
+        int roundOffset = rc.getRoundNum() / 200;
+        int myAssignment = (rc.getID() + roundOffset) % mineCount;
+        
+        int xSlot = MINE_START_SLOT + (myAssignment * 2);
+        int ySlot = xSlot + 1;
+        
+        int x = rc.readSharedArray(xSlot);
+        int y = rc.readSharedArray(ySlot);
+        
+        if (x == 0 && y == 0) return null;
+        
+        return new MapLocation(x, y);
+    }
+
+    /**
+     * Encode a mine location for squeaking.
+     * Format: x * 100 + y (works for maps up to 100x100)
+     */
+    static int encodeMineLocation(MapLocation loc) {
+        return loc.x * 100 + loc.y;
     }
 
     // ===== THREAT COMPUTATION =====
@@ -305,6 +365,7 @@ public class BabyRatHauler {
         MapLocation here = rc.getLocation();
         MapInfo[] nearby = rc.senseNearbyMapInfos();
 
+        // Check for visible cheese first (highest priority)
         MapLocation nearestCheese = findNearestCheese(rc, nearby);
         if (nearestCheese != null) {
             m.currentState = RatState.COLLECT;
@@ -313,7 +374,11 @@ public class BabyRatHauler {
             return;
         }
 
+        // Check for visible mine and remember it
         MapLocation nearestMine = findNearestCheeseMine(rc, nearby);
+        if (nearestMine != null) {
+            m.lastSeenMine = nearestMine;  // Remember for reporting to king
+        }
 
         // Enhanced stuck detection
         if (isStuckInLoop(m)) {
@@ -323,6 +388,16 @@ public class BabyRatHauler {
             }
         } else {
             m.stuckCounter = 0;
+        }
+
+        // When slightly stuck, rotate in place to scan with 90° cone before unstuck maneuver
+        if (m.consecutiveFailedMoves >= 2 && m.consecutiveFailedMoves < 3) {
+            Direction cur = rc.getDirection();
+            Direction rotated = cur.rotateRight().rotateRight(); // 90° rotation
+            if (rc.canTurn(rotated)) {
+                rc.turn(rotated);
+            }
+            // Don't return - let it continue to check for cheese/mines after rotating
         }
 
         // Trigger unstuck earlier and more aggressively
@@ -339,12 +414,26 @@ public class BabyRatHauler {
 
         MapLocation target;
 
-        // priority 1: mine
+        // Priority 1: Visible mine nearby
         if (nearestMine != null) {
             target = nearestMine;
             m.turnsAtTarget = 0;
         }
-        // priority 2: center early
+        // Priority 2: Assigned mine from shared array (if we have one)
+        else if (m.assignedMine != null) {
+            target = m.assignedMine;
+            // Reset turns at target if we've reached the assigned mine area
+            if (here.distanceSquaredTo(m.assignedMine) <= 25) {
+                // We're near the mine but don't see cheese, explore around it
+                if (m.turnsAtTarget > 30) {
+                    // Spent too long here, pick a new exploration target nearby
+                    m.explorationTarget = pickExplorationNearMine(rc, m, m.assignedMine);
+                    target = m.explorationTarget;
+                    m.turnsAtTarget = 0;
+                }
+            }
+        }
+        // Priority 3: Center early game
         else if (!m.hasReachedCenter && m.mapCenter != null && turnCount < 80) {
             target = m.mapCenter;
             if (here.distanceSquaredTo(m.mapCenter) <= 35 || m.turnsAtTarget > 20) {
@@ -352,7 +441,7 @@ public class BabyRatHauler {
                 m.turnsAtTarget = 0;
             }
         }
-        // priority 3: persistent exploration target
+        // Priority 4: Persistent exploration target
         else {
             if (m.explorationTarget == null ||
                     here.distanceSquaredTo(m.explorationTarget) <= 4 ||
@@ -373,11 +462,12 @@ public class BabyRatHauler {
     }
 
     static void runCollect(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
-        // Early return policy: deposit smaller loads more frequently
-        final int EARLY_RETURN_RAW = 12; // tunable: 10-15
         int raw = rc.getRawCheese();
+        
+        // Dynamic threshold based on distance to king
+        int earlyReturnThreshold = calculateEarlyReturnThreshold(rc, m);
 
-        if (raw >= EARLY_RETURN_RAW) {
+        if (raw >= earlyReturnThreshold) {
             m.currentState = RatState.RETURN;
             m.stuckCounter = 0;
             m.consecutiveFailedMoves = 0;
@@ -385,6 +475,13 @@ public class BabyRatHauler {
         }
 
         MapInfo[] nearby = rc.senseNearbyMapInfos();
+        
+        // Track any mines we see
+        MapLocation nearestMine = findNearestCheeseMine(rc, nearby);
+        if (nearestMine != null) {
+            m.lastSeenMine = nearestMine;
+        }
+        
         MapLocation nearestCheese = findNearestCheese(rc, nearby);
 
         if (nearestCheese == null) {
@@ -403,6 +500,26 @@ public class BabyRatHauler {
         boolean moved = intelligentMoveToward(rc, m, nearestCheese, nearby, threat);
         if (!moved) m.consecutiveFailedMoves++;
         else m.consecutiveFailedMoves = 0;
+    }
+
+    /**
+     * Calculate how much cheese to collect before returning.
+     * Farther from king = collect more to make the trip worthwhile.
+     */
+    static int calculateEarlyReturnThreshold(RobotController rc, Mem m) {
+        if (m.kingLocation == null) return 10;
+        
+        MapLocation here = rc.getLocation();
+        int distSq = here.distanceSquaredTo(m.kingLocation);
+        
+        // Approximate travel distance
+        int dist = (int) Math.sqrt(distSq);
+        
+        // Base: 8 cheese minimum
+        // Add 1 cheese per 5 tiles of distance, capped at 40
+        int threshold = Math.min(40, 8 + (dist / 5));
+        
+        return threshold;
     }
 
     static void runReturn(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
@@ -464,6 +581,13 @@ public class BabyRatHauler {
 
         if (rc.canTransferCheese(m.kingLocation, raw)) {
             rc.transferCheese(m.kingLocation, raw);
+            
+            // ===== NEW: Report discovered mine to king via squeak =====
+            if (m.lastSeenMine != null) {
+                int encoded = encodeMineLocation(m.lastSeenMine);
+                rc.squeak(encoded);
+            }
+            
             m.moveAwayCounter = 2;
             m.consecutiveFailedMoves = 0;
             return;
@@ -547,18 +671,18 @@ public class BabyRatHauler {
         // dig only for haulers when global cheese is decent
         if (maybeDigBlockingDirt(rc, m, desired, nearby)) return true;
 
-        Direction best = findBestPassableDirection(here, desired, nearby);
+        Direction best = findBestPassableDirection(here, desired, nearby, target);
         if (best != null) {
-            boolean moved = false;
+            // Turn if needed (but don't count this as success)
             if (rc.getDirection() != best && rc.canTurn(best)) {
                 rc.turn(best);
-                moved = true;
             }
+            // Only return true if we actually moved to a new tile
             if (rc.canMoveForward()) {
                 rc.moveForward();
-                moved = true;
+                return true;
             }
-            return moved;
+            return false;
         } else {
             return moveToward(rc, target);
         }
@@ -604,42 +728,53 @@ public class BabyRatHauler {
         return false;
     }
 
-    static Direction findBestPassableDirection(MapLocation here, Direction desired, MapInfo[] nearby) {
-        Direction[] tryDirs = {
+    /**
+     * IMPROVED: Find best passable direction by scoring based on distance to target.
+     * Avoids dead ends and picks directions that make progress.
+     */
+    static Direction findBestPassableDirection(MapLocation here, Direction desired, MapInfo[] nearby, MapLocation target) {
+        Direction[] allDirs = {
                 desired,
                 desired.rotateLeft(),
                 desired.rotateRight(),
                 desired.rotateLeft().rotateLeft(),
                 desired.rotateRight().rotateRight(),
                 desired.rotateLeft().rotateLeft().rotateLeft(),
-                desired.rotateRight().rotateRight().rotateRight()
+                desired.rotateRight().rotateRight().rotateRight(),
+                desired.opposite()
         };
         
-        // Find first passable direction that's not a dead end
-        for (Direction d : tryDirs) {
-            MapLocation nxt = here.add(d);
-            if (isLocationPassable(nxt, nearby)) {
-                // Check if this direction leads to a dead end (surrounded by walls/dirt)
-                int passableNeighbors = 0;
-                for (Direction checkDir : DIRECTIONS) {
-                    MapLocation beyond = nxt.add(checkDir);
-                    if (isLocationPassable(beyond, nearby)) {
-                        passableNeighbors++;
-                    }
+        Direction bestDir = null;
+        int bestScore = Integer.MAX_VALUE;
+        
+        for (Direction d : allDirs) {
+            MapLocation next = here.add(d);
+            if (!isLocationPassable(next, nearby)) continue;
+            
+            // Score = distance to target (lower is better)
+            int distToTarget = next.distanceSquaredTo(target);
+            
+            // Penalize directions that lead to dead ends
+            int passableNeighbors = 0;
+            for (Direction checkDir : DIRECTIONS) {
+                MapLocation beyond = next.add(checkDir);
+                if (isLocationPassable(beyond, nearby)) {
+                    passableNeighbors++;
                 }
-                // If there are at least 2 passable neighbors, it's not a dead end
-                if (passableNeighbors >= 2) {
-                    return d;
-                }
+            }
+            
+            // Heavy penalty for dead ends (only 1 exit = the way we came)
+            if (passableNeighbors <= 1) {
+                distToTarget += 1000;
+            }
+            
+            if (distToTarget < bestScore) {
+                bestScore = distToTarget;
+                bestDir = d;
             }
         }
         
-        // If no good direction found, try any passable direction
-        for (Direction d : tryDirs) {
-            MapLocation nxt = here.add(d);
-            if (isLocationPassable(nxt, nearby)) return d;
-        }
-        return null;
+        return bestDir;
     }
 
     static boolean isLocationPassable(MapLocation loc, MapInfo[] nearby) {
@@ -666,7 +801,6 @@ public class BabyRatHauler {
     }
 
     static boolean tryMoveInDirection(RobotController rc, Direction dir) throws GameActionException {
-        boolean did = false;
         if (dir == null || dir == Direction.CENTER) return false;
 
         // Check if there's a robot blocking our path
@@ -679,15 +813,17 @@ public class BabyRatHauler {
             }
         }
 
+        // Turn if needed (but don't count this as success)
         if (rc.getDirection() != dir && rc.canTurn(dir)) {
             rc.turn(dir);
-            did = true;
         }
+
+        // Only return true if we actually moved to a new tile
         if (rc.canMoveForward()) {
             rc.moveForward();
-            did = true;
+            return true;
         }
-        return did;
+        return false;
     }
 
     static void moveAwayFromKing(RobotController rc, Mem m) throws GameActionException {
@@ -820,6 +956,20 @@ public class BabyRatHauler {
         MapLocation here = rc.getLocation();
         MapLocation target = here.add(desired);
         return isLocationPassable(target, nearby);
+    }
+
+    /**
+     * Pick an exploration target near an assigned mine.
+     * Used when we're at the mine but don't see cheese - explore the area.
+     */
+    static MapLocation pickExplorationNearMine(RobotController rc, Mem m, MapLocation mine) {
+        int offsetX = m.rng.nextInt(11) - 5;  // -5 to +5
+        int offsetY = m.rng.nextInt(11) - 5;
+        
+        int newX = Math.max(2, Math.min(rc.getMapWidth() - 3, mine.x + offsetX));
+        int newY = Math.max(2, Math.min(rc.getMapHeight() - 3, mine.y + offsetY));
+        
+        return new MapLocation(newX, newY);
     }
 
     static MapLocation pickNewExplorationTarget(RobotController rc, Mem m) {

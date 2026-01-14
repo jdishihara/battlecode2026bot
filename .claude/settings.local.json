@@ -10,7 +10,8 @@
       "Bash(for map in DefaultSmall DefaultMedium DefaultLarge)",
       "Bash(do echo \"=== Testing $map ===\")",
       "Bash(done)",
-      "Bash(for map in DefaultSmall DefaultMedium)"
+      "Bash(for map in DefaultSmall DefaultMedium)",
+      "Bash(./gradlew compileJava:*)"
     ]
   }
 }

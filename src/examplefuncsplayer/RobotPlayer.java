@@ -6,6 +6,8 @@ import examplefuncsplayer.units.RatKing;
 import examplefuncsplayer.units.BabyRatAttacker;
 import examplefuncsplayer.units.BabyRatHauler;
 
+import static examplefuncsplayer.config.Shared.*;
+
 /**
  * Thin dispatcher: routes each unit to its role file.
  * All constants/state machines live in config/ + units/.
@@ -27,13 +29,23 @@ public class RobotPlayer {
                 if (type == UnitType.RAT_KING) {
                     RatKing.run(rc, turnCount);
                 } else if (type == UnitType.BABY_RAT) {
-                    // Keep the same role split rule you had before:
-                    // even ID = attacker, odd ID = hauler
-                    boolean isAttacker = (rc.getID() % 2 == 0);
+                    // Spawn attackers first, then haulers based on birth round
+                    // Birth round = the round this rat was spawned
+                    int birthRound = rc.getRoundNum() - turnCount + 1;
+
+                    // First ~36 rounds of spawned rats are attackers (roughly NUM_INITIAL_ATTACKERS worth)
+                    // This ensures attackers spawn before haulers
+                    int attackerRoundCutoff = NUM_INITIAL_ATTACKERS * 3;
+                    boolean isAttacker = (birthRound <= attackerRoundCutoff);
+
                     if (isAttacker) {
                         BabyRatAttacker.run(rc, turnCount);
                     } else {
                         BabyRatHauler.run(rc, turnCount);
+                    }
+                    // Debug: see role assignment values
+                    if (turnCount == 1) {
+                        System.out.println("ID:" + rc.getID() + " birthRound:" + birthRound + " cutoff:" + attackerRoundCutoff + " attacker:" + isAttacker);
                     }
                 } else {
                     // If Battlecode adds other unit types later, do nothing safely.

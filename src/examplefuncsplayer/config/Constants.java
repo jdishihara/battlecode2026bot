@@ -83,5 +83,26 @@ public final class Constants {
             Direction.NORTHWEST,
     };
 
+    // ===== GLOBAL ALERT SYSTEM (Shared Array) =====
+    // Schema for attacker swarm/rally coordination via shared array.
+    // Indices 23-28 reserved for alert system.
+    // ALERT_FLAG: 0 = no alert, 1 = swarm/rally active
+    // ALERT_X/Y: MapLocation of alert (0-63 each, valid map coordinates)
+    // ALERT_EXPIRES: Round number (mod 1000) when alert expires
+    // ALERT_REASON: Reason code (0 = none, 1 = enemy king found, 2 = need backup, 3 = king danger)
+    // ALERT_UPDATED_ROUND: Round when alert was last updated (mod 1000)
+    public static final int ALERT_FLAG = 23;
+    public static final int ALERT_X = 24;
+    public static final int ALERT_Y = 25;
+    public static final int ALERT_EXPIRES = 26;
+    public static final int ALERT_REASON = 27;
+    public static final int ALERT_UPDATED_ROUND = 28;
+
+    // Alert reason codes
+    public static final int ALERT_REASON_NONE = 0;
+    public static final int ALERT_REASON_ENEMY_KING = 1;
+    public static final int ALERT_REASON_NEED_BACKUP = 2;
+    public static final int ALERT_REASON_KING_DANGER = 3;
+
     private Constants() {}
 }

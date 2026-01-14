@@ -8,11 +8,10 @@ import static examplefuncsplayer.config.Shared.*;
 /**
  * RatKing logic: spawns baby rats, broadcasts shared info, and evades cats.
  *
- * v3 Updates:
- * - CLUSTERED SYMMETRY SEARCH: Manages global symmetry state for all attackers
- * - All attackers check the same symmetry together (controlled via shared array)
- * - Listens for symmetry elimination reports from attackers
- * - Automatically switches all attackers to next symmetry when current is eliminated
+ * v4 Updates:
+ * - DIRT WALL DEFENSE: When escaping from cats, king now builds 2-tile dirt walls
+ * - Prioritizes dirt walls over cat traps when dirt is available
+ * - Falls back to cat traps if no dirt available or wall placement fails
  */
 public class RatKing {
 
@@ -27,6 +26,7 @@ public class RatKing {
     static KingState kingState = KingState.SAFE;
     static int lastEscapeRound = -999;
     static int lastCatTrapRound = -999;
+    static int lastDirtWallRound = -999;
     static int safeRoundsCounter = 0;
 
     // === Enemy king tracking ===
@@ -35,6 +35,16 @@ public class RatKing {
 
     // === NEW: Symmetry management ===
     static boolean symmetryInitialized = false;
+
+    // === DIRT WALL CONSTANTS ===
+    static final int DIRT_PLACE_COST = 10;
+    static final int DIRT_WALL_COOLDOWN = 3; // Rounds between wall placements
+    static final int MIN_CHEESE_FOR_DIRT = 50; // Minimum cheese to spend on dirt
+
+    // === MINE TRACKING CONSTANTS ===
+    private static final int MINE_COUNT_SLOT = 9;
+    private static final int MINE_START_SLOT = 10;  // Slots 10-25 for up to 8 mines
+    private static final int MAX_KNOWN_MINES = 8;
 
     /**
      * Main per-turn entrypoint for the Rat King.
@@ -48,6 +58,8 @@ public class RatKing {
         // ===== INITIALIZE SYMMETRY TRACKING (first turn only) =====
         if (!symmetryInitialized) {
             initializeSymmetryTracking(rc, roundNum);
+            // Write King's ID so baby rats can calculate spawn order
+            rc.writeSharedArray(KING_ID_INDEX, rc.getID() % 1000);
             symmetryInitialized = true;
         }
 
@@ -56,6 +68,10 @@ public class RatKing {
 
         // ===== PROCESS INCOMING SQUEAKS =====
         processIncomingSqueaks(rc, roundNum);
+
+        // ===== LISTEN FOR MINE REPORTS & BROADCAST VISIBLE MINES =====
+        listenForMineReports(rc);
+        broadcastVisibleMines(rc);
 
         // ===== LOOK FOR ENEMY KING DIRECTLY =====
         detectAndBroadcastEnemyKing(rc, roundNum);
@@ -136,7 +152,7 @@ public class RatKing {
         }
         kingCounterAttack(rc);
 
-        // Debug string with symmetry info
+        // Debug string with symmetry info and dirt count
         int currentSym = rc.readSharedArray(CURRENT_SYMMETRY_INDEX);
         int eliminated = rc.readSharedArray(SYMMETRY_ELIMINATED_INDEX);
         String symStr = currentSym == 1 ? "ROT" : currentSym == 2 ? "HOR" : currentSym == 3 ? "VER" : "UNK";
@@ -145,11 +161,184 @@ public class RatKing {
                          ((eliminated & 4) != 0 ? "V" : "");
 
         rc.setIndicatorString("King " + kingState + " | Cheese: " + globalCheese +
+                " | Dirt: " + rc.getDirt() +
                 " | Sym:" + symStr + " Elim:" + elimStr +
                 " | EnemyKing: " + (lastKnownEnemyKingLoc != null ? lastKnownEnemyKingLoc : "?"));
     }
 
-    // ==================== SYMMETRY MANAGEMENT (NEW) ====================
+    // ==================== DIRT WALL DEFENSE (NEW) ====================
+
+    /**
+     * Attempts to place a 2-tile dirt wall between the king and the cat.
+     * The wall is placed perpendicular to the cat's approach direction.
+     * 
+     * @param rc The robot controller
+     * @param catLocation The location of the threatening cat
+     * @param roundNum Current round number
+     * @return true if at least one dirt was placed, false otherwise
+     */
+    static boolean tryPlaceDirtWall(RobotController rc, MapLocation catLocation, int roundNum) throws GameActionException {
+        // Check cooldown
+        if (roundNum - lastDirtWallRound < DIRT_WALL_COOLDOWN) {
+            return false;
+        }
+
+        // Check if we have dirt available
+        int availableDirt = rc.getDirt();
+        if (availableDirt < 1) {
+            return false;
+        }
+
+        // Check if we have enough cheese (dirt placement costs cheese)
+        int globalCheese = rc.getGlobalCheese();
+        if (globalCheese < MIN_CHEESE_FOR_DIRT) {
+            return false;
+        }
+
+        // Check action cooldown
+        if (!rc.isActionReady()) {
+            return false;
+        }
+
+        MapLocation kingLoc = rc.getLocation();
+        
+        // Direction from king to cat (we want to block this direction)
+        Direction toCat = kingLoc.directionTo(catLocation);
+        if (toCat == Direction.CENTER) {
+            return false;
+        }
+
+        // Get perpendicular directions for the wall
+        Direction perpLeft = toCat.rotateLeft().rotateLeft(); // 90 degrees left
+        Direction perpRight = toCat.rotateRight().rotateRight(); // 90 degrees right
+
+        // Find the best location between king and cat to place the wall
+        // We want to place it a couple tiles in front of the king (toward the cat)
+        MapLocation wallCenter = kingLoc.add(toCat).add(toCat); // 2 tiles toward cat
+        
+        // If that's too close to cat or not valid, try 1 tile away
+        if (kingLoc.distanceSquaredTo(wallCenter) > kingLoc.distanceSquaredTo(catLocation) ||
+            !isValidDirtLocation(rc, wallCenter)) {
+            wallCenter = kingLoc.add(toCat); // 1 tile toward cat
+        }
+
+        boolean placedAny = false;
+        int dirtPlaced = 0;
+        int maxDirtToPlace = Math.min(2, availableDirt);
+
+        // Try to place dirt at wall center first
+        if (dirtPlaced < maxDirtToPlace && tryPlaceSingleDirt(rc, wallCenter)) {
+            placedAny = true;
+            dirtPlaced++;
+            lastDirtWallRound = roundNum;
+        }
+
+        // If we can place more and action is still ready, place adjacent dirt
+        if (dirtPlaced < maxDirtToPlace && rc.isActionReady()) {
+            // Try perpendicular positions to create a wall
+            MapLocation leftPos = wallCenter.add(perpLeft);
+            MapLocation rightPos = wallCenter.add(perpRight);
+
+            if (tryPlaceSingleDirt(rc, leftPos)) {
+                placedAny = true;
+                dirtPlaced++;
+            } else if (rc.isActionReady() && tryPlaceSingleDirt(rc, rightPos)) {
+                placedAny = true;
+                dirtPlaced++;
+            }
+        }
+
+        // If center didn't work, try alternative wall positions
+        if (!placedAny) {
+            // Try positions directly adjacent to king in the direction of cat
+            Direction[] wallDirs = {toCat, toCat.rotateLeft(), toCat.rotateRight()};
+            
+            for (Direction dir : wallDirs) {
+                if (!rc.isActionReady()) break;
+                
+                MapLocation pos = kingLoc.add(dir);
+                if (tryPlaceSingleDirt(rc, pos)) {
+                    placedAny = true;
+                    lastDirtWallRound = roundNum;
+                    break;
+                }
+            }
+        }
+
+        return placedAny;
+    }
+
+    /**
+     * Attempts to place a single dirt block at the specified location.
+     * 
+     * @param rc The robot controller
+     * @param loc The location to place dirt
+     * @return true if dirt was placed, false otherwise
+     */
+    static boolean tryPlaceSingleDirt(RobotController rc, MapLocation loc) throws GameActionException {
+        if (rc.canPlaceDirt(loc)) {
+            rc.placeDirt(loc);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Checks if a location is valid for dirt placement.
+     * Dirt cannot be placed on walls, existing dirt, robots, cheese, or cheese mines.
+     */
+    static boolean isValidDirtLocation(RobotController rc, MapLocation loc) throws GameActionException {
+        // Check if location is on the map
+        if (!rc.onTheMap(loc)) {
+            return false;
+        }
+
+        // Check if we can sense the location
+        if (!rc.canSenseLocation(loc)) {
+            return false;
+        }
+
+        MapInfo info = rc.senseMapInfo(loc);
+        
+        // Cannot place on walls or existing dirt
+        if (info.isWall() || info.isDirt()) {
+            return false;
+        }
+
+        // Cannot place on cheese mines
+        if (info.hasCheeseMine()) {
+            return false;
+        }
+
+        // Cannot place if there's a robot there
+        if (rc.canSenseRobotAtLocation(loc) && rc.senseRobotAtLocation(loc) != null) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Attempts to dig dirt from nearby locations to build up dirt reserves.
+     * Called during safe state to prepare for emergencies.
+     */
+    static void tryDigDirt(RobotController rc) throws GameActionException {
+        if (!rc.isActionReady()) return;
+        if (rc.getGlobalCheese() < DIRT_PLACE_COST + 50) return; // Keep buffer for other actions
+
+        MapLocation kingLoc = rc.getLocation();
+        
+        // Look for dirt in adjacent tiles
+        for (Direction dir : DIRECTIONS) {
+            MapLocation checkLoc = kingLoc.add(dir);
+            if (rc.canRemoveDirt(checkLoc)) {
+                rc.removeDirt(checkLoc);
+                return;
+            }
+        }
+    }
+
+    // ==================== SYMMETRY MANAGEMENT ====================
 
     /**
      * Initialize symmetry tracking at game start.
@@ -226,7 +415,7 @@ public class RatKing {
             int content = msg.getBytes();
             MapLocation senderLoc = msg.getSource();
 
-            // === Handle symmetry elimination reports (NEW) ===
+            // === Handle symmetry elimination reports ===
             if (content >= SQUEAK_SYMMETRY_ELIMINATED && content < SQUEAK_SYMMETRY_ELIMINATED + 30) {
                 int eliminatedSymIndex = (content - SQUEAK_SYMMETRY_ELIMINATED) / 10;
                 if (eliminatedSymIndex >= 0 && eliminatedSymIndex < 3) {
@@ -247,6 +436,88 @@ public class RatKing {
             }
             else if (content == SQUEAK_ENEMY_ATTACKING_KING) {
                 // Our rats are under attack - could increase threat level
+            }
+        }
+    }
+
+    /**
+     * Listen for baby rat squeaks reporting mine locations.
+     * Decode the location and add to shared array if new.
+     */
+    public static void listenForMineReports(RobotController rc) throws GameActionException {
+        // Read all squeaks from baby rats
+        Message[] messages = rc.readSqueaks(-1);
+
+        for (Message msg : messages) {
+            int encoded = msg.getBytes();
+
+            // Decode: x * 100 + y
+            int x = encoded / 100;
+            int y = encoded % 100;
+
+            // Validate coordinates
+            if (x < 0 || x >= rc.getMapWidth() || y < 0 || y >= rc.getMapHeight()) {
+                continue;  // Invalid, skip
+            }
+
+            MapLocation mineLoc = new MapLocation(x, y);
+
+            // Check if this mine is already known
+            int mineCount = rc.readSharedArray(MINE_COUNT_SLOT);
+            boolean alreadyKnown = false;
+
+            for (int i = 0; i < mineCount && i < MAX_KNOWN_MINES; i++) {
+                int storedX = rc.readSharedArray(MINE_START_SLOT + i * 2);
+                int storedY = rc.readSharedArray(MINE_START_SLOT + i * 2 + 1);
+
+                if (storedX == x && storedY == y) {
+                    alreadyKnown = true;
+                    break;
+                }
+            }
+
+            // Add new mine to shared array
+            if (!alreadyKnown && mineCount < MAX_KNOWN_MINES) {
+                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2, x);
+                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2 + 1, y);
+                rc.writeSharedArray(MINE_COUNT_SLOT, mineCount + 1);
+            }
+        }
+    }
+
+    /**
+     * Broadcast any cheese mines the king can see directly.
+     * King has 360° vision with 25 unit radius.
+     */
+    public static void broadcastVisibleMines(RobotController rc) throws GameActionException {
+        MapInfo[] visible = rc.senseNearbyMapInfos();
+
+        for (MapInfo info : visible) {
+            if (!info.hasCheeseMine()) continue;
+
+            MapLocation mineLoc = info.getMapLocation();
+            int x = mineLoc.x;
+            int y = mineLoc.y;
+
+            // Check if already known
+            int mineCount = rc.readSharedArray(MINE_COUNT_SLOT);
+            boolean alreadyKnown = false;
+
+            for (int i = 0; i < mineCount && i < MAX_KNOWN_MINES; i++) {
+                int storedX = rc.readSharedArray(MINE_START_SLOT + i * 2);
+                int storedY = rc.readSharedArray(MINE_START_SLOT + i * 2 + 1);
+
+                if (storedX == x && storedY == y) {
+                    alreadyKnown = true;
+                    break;
+                }
+            }
+
+            // Add new mine
+            if (!alreadyKnown && mineCount < MAX_KNOWN_MINES) {
+                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2, x);
+                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2 + 1, y);
+                rc.writeSharedArray(MINE_COUNT_SLOT, mineCount + 1);
             }
         }
     }
@@ -327,7 +598,7 @@ public class RatKing {
         return 0;
     }
 
-    // ==================== EXISTING METHODS (unchanged) ====================
+    // ==================== SENSING METHODS ====================
 
     static RobotInfo findNearestCatForKing(RobotController rc) throws GameActionException {
         RobotInfo[] nearbyRobots = rc.senseNearbyRobots(ALERT_RADIUS);
@@ -395,6 +666,8 @@ public class RatKing {
         }
     }
 
+    // ==================== TRAP PLACEMENT ====================
+
     static void placeDefensiveTraps(RobotController rc, MapLocation enemyRatLocation) throws GameActionException {
         if (rc.getGlobalCheese() < 150) return;
 
@@ -441,9 +714,16 @@ public class RatKing {
         }
     }
 
+    // ==================== STATE BEHAVIORS ====================
+
     static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount,
                                  MapLocation enemyRatLocation) throws GameActionException {
         int minCheeseForSpawn = spawnCost + 100;
+
+        // Try to dig dirt during safe state to build reserves
+        if (turnCount % 5 == 0 && rc.getDirt() < 10) {
+            tryDigDirt(rc);
+        }
 
         if (turnCount % 10 == 0) {
             placeDefensiveTraps(rc, enemyRatLocation);
@@ -480,7 +760,11 @@ public class RatKing {
         if (catLocation != null) {
             final int MID_RANGE = 15;
             if (catDistSq <= MID_RANGE * MID_RANGE) {
-                tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+                // Try dirt wall first, fall back to cat trap
+                boolean placedWall = tryPlaceDirtWall(rc, catLocation, roundNum);
+                if (!placedWall) {
+                    tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+                }
             }
         }
 
@@ -495,12 +779,20 @@ public class RatKing {
                 (catDistSq <= PANIC_RADIUS * PANIC_RADIUS);
 
         if (canAttemptEscape && catLocation != null) {
-            tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+            // PRIORITY 1: Try to place dirt wall between us and cat
+            boolean placedDirtWall = tryPlaceDirtWall(rc, catLocation, roundNum);
+            
+            // PRIORITY 2: If no dirt available, fall back to cat trap
+            if (!placedDirtWall) {
+                tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+            }
 
+            // Place defensive rat traps if we have cheese
             if (globalCheese >= 200) {
                 placeDefensiveTraps(rc, enemyRatLocation);
             }
 
+            // PRIORITY 3: Move away from cat
             tryKingEscape(rc, catLocation);
             lastEscapeRound = roundNum;
 
@@ -593,6 +885,8 @@ public class RatKing {
 
         return false;
     }
+
+    // ==================== MOVEMENT ====================
 
     static boolean tryKingEscape(RobotController rc, MapLocation catLocation) throws GameActionException {
         MapLocation kingLoc = rc.getLocation();
