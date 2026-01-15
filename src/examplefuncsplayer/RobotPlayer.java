@@ -3,8 +3,8 @@ package examplefuncsplayer;
 import battlecode.common.*;
 
 import examplefuncsplayer.units.RatKing;
-import examplefuncsplayer.units.BabyRatAttacker;
-import examplefuncsplayer.units.BabyRatHauler;
+import examplefuncsplayer.units.BabyRatAttacker.BabyRatAttacker;
+import examplefuncsplayer.units.BabyRatHauler.BabyRatHauler;
 
 import static examplefuncsplayer.config.Shared.*;
 

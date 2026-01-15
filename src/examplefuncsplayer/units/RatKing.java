@@ -46,6 +46,12 @@ public class RatKing {
     private static final int MINE_START_SLOT = 10;  // Slots 10-25 for up to 8 mines
     private static final int MAX_KNOWN_MINES = 8;
 
+    // === 2-SQUEAK MINE REPORT TRACKING ===
+    // Arrays indexed by (senderID & 127) to pair X and Y squeaks
+    private static final int SENDER_SLOTS = 128;
+    private static final int[] pendingMineX = new int[SENDER_SLOTS];      // 0 = unset, otherwise x+1
+    private static final int[] pendingMineRound = new int[SENDER_SLOTS];  // Round the X was received
+
     /**
      * Main per-turn entrypoint for the Rat King.
      */
@@ -441,53 +447,85 @@ public class RatKing {
     }
 
     /**
-     * Listen for baby rat squeaks reporting mine locations.
-     * Decode the location and add to shared array if new.
+     * Listen for baby rat squeaks reporting mine locations via 2-squeak protocol.
+     * Format: 800+x (stage 0), then 900+y (stage 1).
+     * Pairs X and Y from same sender within 2 rounds.
+     * Stores mines using x+1 and y+1 so 0 remains "unset".
      */
     public static void listenForMineReports(RobotController rc) throws GameActionException {
-        // Read all squeaks from baby rats
+        int roundNum = rc.getRoundNum();
+        int mapW = rc.getMapWidth();
+        int mapH = rc.getMapHeight();
+
         Message[] messages = rc.readSqueaks(-1);
 
         for (Message msg : messages) {
-            int encoded = msg.getBytes();
+            int content = msg.getBytes();
+            int senderID = msg.getSenderID();
+            int slot = senderID & 127;
 
-            // Decode: x * 100 + y
-            int x = encoded / 100;
-            int y = encoded % 100;
-
-            // Validate coordinates
-            if (x < 0 || x >= rc.getMapWidth() || y < 0 || y >= rc.getMapHeight()) {
-                continue;  // Invalid, skip
-            }
-
-            MapLocation mineLoc = new MapLocation(x, y);
-
-            // Check if this mine is already known
-            int mineCount = rc.readSharedArray(MINE_COUNT_SLOT);
-            boolean alreadyKnown = false;
-
-            for (int i = 0; i < mineCount && i < MAX_KNOWN_MINES; i++) {
-                int storedX = rc.readSharedArray(MINE_START_SLOT + i * 2);
-                int storedY = rc.readSharedArray(MINE_START_SLOT + i * 2 + 1);
-
-                if (storedX == x && storedY == y) {
-                    alreadyKnown = true;
-                    break;
+            // Check for X squeak: 800 + x
+            if (content >= 800 && content < 900) {
+                int x = content - 800;
+                if (x >= 0 && x < mapW) {
+                    pendingMineX[slot] = x + 1;  // Store x+1 so 0 = unset
+                    pendingMineRound[slot] = roundNum;
                 }
+                continue;
             }
 
-            // Add new mine to shared array
-            if (!alreadyKnown && mineCount < MAX_KNOWN_MINES) {
-                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2, x);
-                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2 + 1, y);
-                rc.writeSharedArray(MINE_COUNT_SLOT, mineCount + 1);
+            // Check for Y squeak: 900 + y
+            if (content >= 900 && content < 1000) {
+                int y = content - 900;
+                if (y < 0 || y >= mapH) continue;
+
+                // Check if we have a pending X from this sender within 2 rounds
+                int storedXPlus1 = pendingMineX[slot];
+                if (storedXPlus1 == 0) continue;  // No pending X
+                if (roundNum - pendingMineRound[slot] > 2) {
+                    // Too old, clear it
+                    pendingMineX[slot] = 0;
+                    continue;
+                }
+
+                int x = storedXPlus1 - 1;  // Decode x
+                pendingMineX[slot] = 0;    // Clear pending
+
+                // Add mine to shared array if new (using x+1, y+1 encoding)
+                addMineToSharedArray(rc, x, y);
             }
+        }
+    }
+
+    /**
+     * Add a mine to shared array using x+1/y+1 encoding (so 0 = unset).
+     * Checks for duplicates before adding.
+     */
+    private static void addMineToSharedArray(RobotController rc, int x, int y) throws GameActionException {
+        int mineCount = rc.readSharedArray(MINE_COUNT_SLOT);
+
+        // Check for duplicates (stored values are x+1, y+1)
+        for (int i = 0; i < mineCount && i < MAX_KNOWN_MINES; i++) {
+            int storedXPlus1 = rc.readSharedArray(MINE_START_SLOT + i * 2);
+            int storedYPlus1 = rc.readSharedArray(MINE_START_SLOT + i * 2 + 1);
+
+            if (storedXPlus1 == x + 1 && storedYPlus1 == y + 1) {
+                return;  // Already known
+            }
+        }
+
+        // Add new mine (store as x+1, y+1)
+        if (mineCount < MAX_KNOWN_MINES) {
+            rc.writeSharedArray(MINE_START_SLOT + mineCount * 2, x + 1);
+            rc.writeSharedArray(MINE_START_SLOT + mineCount * 2 + 1, y + 1);
+            rc.writeSharedArray(MINE_COUNT_SLOT, mineCount + 1);
         }
     }
 
     /**
      * Broadcast any cheese mines the king can see directly.
      * King has 360° vision with 25 unit radius.
+     * Uses x+1/y+1 encoding so 0 = unset.
      */
     public static void broadcastVisibleMines(RobotController rc) throws GameActionException {
         MapInfo[] visible = rc.senseNearbyMapInfos();
@@ -496,29 +534,7 @@ public class RatKing {
             if (!info.hasCheeseMine()) continue;
 
             MapLocation mineLoc = info.getMapLocation();
-            int x = mineLoc.x;
-            int y = mineLoc.y;
-
-            // Check if already known
-            int mineCount = rc.readSharedArray(MINE_COUNT_SLOT);
-            boolean alreadyKnown = false;
-
-            for (int i = 0; i < mineCount && i < MAX_KNOWN_MINES; i++) {
-                int storedX = rc.readSharedArray(MINE_START_SLOT + i * 2);
-                int storedY = rc.readSharedArray(MINE_START_SLOT + i * 2 + 1);
-
-                if (storedX == x && storedY == y) {
-                    alreadyKnown = true;
-                    break;
-                }
-            }
-
-            // Add new mine
-            if (!alreadyKnown && mineCount < MAX_KNOWN_MINES) {
-                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2, x);
-                rc.writeSharedArray(MINE_START_SLOT + mineCount * 2 + 1, y);
-                rc.writeSharedArray(MINE_COUNT_SLOT, mineCount + 1);
-            }
+            addMineToSharedArray(rc, mineLoc.x, mineLoc.y);
         }
     }
 

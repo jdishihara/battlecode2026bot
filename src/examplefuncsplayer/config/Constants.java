@@ -4,6 +4,9 @@ import battlecode.common.Direction;
 
 public final class Constants {
 
+    // ===== DEBUG =====
+    public static final boolean DEBUG = false;
+
     // ===== GENERAL GAMEPLAY =====
     public static final int INITIAL_RATS = 5;
     public static final int CARRY_LIMIT = 20;
@@ -69,7 +72,7 @@ public final class Constants {
 
     // ===== DIRT DIGGING =====
     public static final int DIG_MIN_CHEESE_HAULER = 500;
-    public static final int DIG_MIN_CHEESE_ATTACKER = 1200;
+    public static final int DIG_MIN_CHEESE_ATTACKER = 0;
 
     // ===== DIRECTIONS =====
     public static final Direction[] DIRECTIONS = {
