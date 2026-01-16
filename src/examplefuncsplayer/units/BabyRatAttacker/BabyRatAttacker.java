@@ -526,6 +526,18 @@ public class BabyRatAttacker {
                         RobotInfo[] nearbyAllies) throws GameActionException {
         MapLocation here = rc.getLocation();
 
+        // === OPPORTUNISTIC ATTACK: Hit adjacent enemy rats while seeking ===
+        RobotInfo[] adjacentEnemies = rc.senseNearbyRobots(2, rc.getTeam().opponent());
+        for (RobotInfo enemy : adjacentEnemies) {
+            if (enemy.getType() == UnitType.BABY_RAT) {
+                int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
+                if (rc.canAttack(enemy.getLocation(), spend)) {
+                    rc.attack(enemy.getLocation(), spend);
+                    break;
+                }
+            }
+        }
+
         // If we have a swarm target, go there
         if (m.swarmTarget != null && roundNum - m.swarmStartRound < 30) {
             m.state = AttackStateEnum.SWARM;

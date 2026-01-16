@@ -11,7 +11,8 @@
       "Bash(do echo \"=== Testing $map ===\")",
       "Bash(done)",
       "Bash(for map in DefaultSmall DefaultMedium)",
-      "Bash(./gradlew compileJava:*)"
+      "Bash(./gradlew compileJava:*)",
+      "Bash(find:*)"
     ]
   }
 }
