@@ -2,7 +2,7 @@ package examplefuncsplayer;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.RatKing;
+import examplefuncsplayer.units.RatKing.RatKing;
 import examplefuncsplayer.units.BabyRatAttacker.BabyRatAttacker;
 import examplefuncsplayer.units.BabyRatHauler.BabyRatHauler;
 
