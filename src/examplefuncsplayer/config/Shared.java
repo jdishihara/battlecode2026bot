@@ -49,7 +49,7 @@ public final class Shared {
 
     // ===== SPAWN ORDER TRACKING =====
     public static final int KING_ID_INDEX = 29;       // King's ID (mod 1000) for spawn order calculation
-    public static final int NUM_INITIAL_ATTACKERS = 6; // First N baby rats are attackers, rest are haulers
+    public static final int NUM_INITIAL_ATTACKERS = 7; // First N baby rats are attackers, rest are haulers
 
     // ===== RESERVED FOR FUTURE USE =====
     // Indices 30-63 available for expansion (23-28 used by ALERT system in Constants.java)

@@ -8,7 +8,7 @@ public final class Constants {
     public static final boolean DEBUG = false;
 
     // ===== GENERAL GAMEPLAY =====
-    public static final int INITIAL_RATS = 5;
+    public static final int INITIAL_RATS = 10;
     public static final int CARRY_LIMIT = 20;
     public static final int LOW_CHEESE_THRESHOLD = 1500;
     public static final int CRITICAL_CHEESE_THRESHOLD = 300;
@@ -23,10 +23,10 @@ public final class Constants {
     public static final int ENEMY_FLEE_RADIUS = 12;
 
     // ===== RAT KING =====
-    public static final int ALERT_RADIUS = 18;
-    public static final int ESCAPE_RADIUS = 10;
-    public static final int PANIC_RADIUS = 6;
-    public static final int ESCAPE_COOLDOWN = 12;
+    public static final int ALERT_RADIUS = 20;
+    public static final int ESCAPE_RADIUS = 20;
+    public static final int PANIC_RADIUS = 10;
+    public static final int ESCAPE_COOLDOWN = 1;
 
     // ===== ATTACKER =====
     public static final int ATTACKER_CAT_FLEE_RADIUS = 6;
@@ -42,9 +42,9 @@ public final class Constants {
     // ===== COMBAT & SWARMING =====
     public static final int SQUEAK_COOLDOWN = 8;              // Rounds between squeaks (avoid cat attention)
     public static final int SQUEAK_LISTEN_ROUNDS = 5;         // How far back to read messages
-    public static final int SWARM_RESPONSE_DISTANCE_SQ = 400; // Respond to squeaks within 20 units
+    public static final int SWARM_RESPONSE_DISTANCE_SQ = 999; // Respond to squeaks within 20 units
     public static final int TRAP_CHEESE_THRESHOLD = 200;      // Min cheese to place offensive traps
-    public static final int OFFENSIVE_TRAP_COOLDOWN = 15;     // Rounds between offensive trap placements
+    public static final int OFFENSIVE_TRAP_COOLDOWN = 1;     // Rounds between offensive trap placements
     public static final int MAX_TEAM_RAT_TRAPS = 25;          // From spec - max rat traps per team
     public static final int RAT_TRAP_COST = 30;               // From spec
     public static final int RAT_TRAP_DAMAGE = 50;             // From spec
@@ -71,7 +71,7 @@ public final class Constants {
     public static final int SQUEAK_RALLY_TO_ME = 7;           // NEW: call cluster to regroup
 
     // ===== DIRT DIGGING =====
-    public static final int DIG_MIN_CHEESE_HAULER = 500;
+    public static final int DIG_MIN_CHEESE_HAULER = 50;
     public static final int DIG_MIN_CHEESE_ATTACKER = 0;
 
     // ===== DIRECTIONS =====
