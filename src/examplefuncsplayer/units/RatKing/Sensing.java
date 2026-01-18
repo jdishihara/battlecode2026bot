@@ -58,4 +58,47 @@ public class Sensing {
         }
         return count;
     }
+
+    /**
+     * Count enemy baby rats within a given distance squared.
+     */
+    public static int countNearbyEnemyRats(RobotController rc, int radiusSq) throws GameActionException {
+        RobotInfo[] robots = rc.senseNearbyRobots(radiusSq);
+        int count = 0;
+        Team enemy = rc.getTeam().opponent();
+        for (RobotInfo r : robots) {
+            if (r.getTeam() == enemy && r.getType() == UnitType.BABY_RAT) count++;
+        }
+        return count;
+    }
+
+    /**
+     * Find all enemy rats within a radius and return the closest ones.
+     * Useful for threat assessment.
+     */
+    public static RobotInfo[] findNearbyEnemyRats(RobotController rc, int radiusSq) throws GameActionException {
+        RobotInfo[] robots = rc.senseNearbyRobots(radiusSq);
+        Team enemy = rc.getTeam().opponent();
+
+        // Count enemies first
+        int count = 0;
+        for (RobotInfo r : robots) {
+            if (r.getTeam() == enemy &&
+                (r.getType() == UnitType.BABY_RAT || r.getType() == UnitType.RAT_KING)) {
+                count++;
+            }
+        }
+
+        // Create result array
+        RobotInfo[] enemies = new RobotInfo[count];
+        int idx = 0;
+        for (RobotInfo r : robots) {
+            if (r.getTeam() == enemy &&
+                (r.getType() == UnitType.BABY_RAT || r.getType() == UnitType.RAT_KING)) {
+                enemies[idx++] = r;
+            }
+        }
+
+        return enemies;
+    }
 }

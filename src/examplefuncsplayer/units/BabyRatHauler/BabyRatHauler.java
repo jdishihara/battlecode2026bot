@@ -96,12 +96,21 @@ public class BabyRatHauler {
         }
 
         // ===== FSM TRANSITIONS BASED ON THREAT =====
-        if (threat.level != ThreatLevel.NONE) {
-            if (m.currentState != RatState.FLEE) {
+        if (threat.shouldDefendKing && threat.enemyToAttack != null) {
+            // Defend the king - attack enemies instead of fleeing
+            if (m.currentState != RatState.DEFEND) {
+                m.previousState = m.currentState;
+                m.currentState = RatState.DEFEND;
+            }
+        } else if (threat.level != ThreatLevel.NONE) {
+            if (m.currentState != RatState.FLEE && m.currentState != RatState.DEFEND) {
                 m.previousState = m.currentState;
                 m.currentState = RatState.FLEE;
+            } else if (m.currentState == RatState.DEFEND) {
+                // Was defending but now need to flee (cat came close)
+                m.currentState = RatState.FLEE;
             }
-        } else if (m.currentState == RatState.FLEE) {
+        } else if (m.currentState == RatState.FLEE || m.currentState == RatState.DEFEND) {
             m.currentState = m.previousState;
         }
 
@@ -112,6 +121,7 @@ public class BabyRatHauler {
             case RETURN:  runReturn(rc, m, threat); break;
             case DELIVER: runDeliver(rc, m, threat); break;
             case FLEE:    runFlee(rc, m, threat); break;
+            case DEFEND:  runDefend(rc, m, threat); break;
         }
 
         if (DEBUG) rc.setIndicatorString("HAULER " + m.currentState + " | Raw:" + rc.getRawCheese() + " | Mine:" + (m.assignedMine != null ? m.assignedMine.toString() : "none"));
@@ -325,6 +335,11 @@ public class BabyRatHauler {
         return threshold;
     }
 
+    /** Maximum raw cheese to carry during opportunistic pickup (3 spawns worth) */
+    static final int OPPORTUNISTIC_PICKUP_CAP = 60;
+    /** Maximum distance squared to pick up cheese during return (3 tiles) */
+    static final int OPPORTUNISTIC_PICKUP_RANGE_SQ = 9;
+
     static void runReturn(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
         if (m.kingLocation == null) {
             m.currentState = RatState.EXPLORE;
@@ -347,6 +362,29 @@ public class BabyRatHauler {
             return;
         }
 
+        MapInfo[] nearby = rc.senseNearbyMapInfos();
+
+        // === OPPORTUNISTIC PICKUP: grab nearby cheese while returning ===
+        // Only if we have capacity and cheese is very close (1-3 tiles)
+        if (raw < OPPORTUNISTIC_PICKUP_CAP) {
+            MapLocation here = rc.getLocation();
+            for (MapInfo info : nearby) {
+                if (info.getCheeseAmount() > 0) {
+                    MapLocation cheeseLoc = info.getMapLocation();
+                    int distSq = here.distanceSquaredTo(cheeseLoc);
+                    if (distSq <= OPPORTUNISTIC_PICKUP_RANGE_SQ) {
+                        // Check if picking this up would exceed our cap
+                        int newTotal = raw + info.getCheeseAmount();
+                        if (newTotal <= OPPORTUNISTIC_PICKUP_CAP && rc.canPickUpCheese(cheeseLoc)) {
+                            rc.pickUpCheese(cheeseLoc);
+                            raw = rc.getRawCheese(); // Update for next iteration
+                            if (raw >= OPPORTUNISTIC_PICKUP_CAP) break;
+                        }
+                    }
+                }
+            }
+        }
+
         if (rc.canTransferCheese(m.kingLocation, raw)) {
             m.currentState = RatState.DELIVER;
             m.stuckCounter = 0;
@@ -354,7 +392,6 @@ public class BabyRatHauler {
             return;
         }
 
-        MapInfo[] nearby = rc.senseNearbyMapInfos();
         boolean moved = intelligentMoveToward(rc, m, m.kingLocation, nearby, threat);
         if (!moved) m.consecutiveFailedMoves++;
         else m.consecutiveFailedMoves = 0;
@@ -437,6 +474,79 @@ public class BabyRatHauler {
         if (!moved) {
             Direction fallback = DIRECTIONS[m.rng.nextInt(8)];
             tryMoveInDirection(rc, fallback);
+        }
+    }
+
+    /**
+     * DEFEND state: Attack enemy rats threatening the king.
+     * Prioritizes attacking over fleeing when near the king with backup.
+     */
+    static void runDefend(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
+        // If no enemy to attack, return to previous state
+        if (threat.enemyToAttack == null) {
+            m.currentState = m.previousState;
+            return;
+        }
+
+        MapLocation here = rc.getLocation();
+        MapLocation enemyLoc = threat.enemyToAttack;
+
+        // Find the best target (might be different from threat.enemyToAttack)
+        RobotInfo bestTarget = findBestAttackTarget(rc, m);
+        if (bestTarget != null) {
+            enemyLoc = bestTarget.getLocation();
+        }
+
+        int distToEnemy = here.distanceSquaredTo(enemyLoc);
+
+        // If adjacent (dist <= 2), attack!
+        if (distToEnemy <= 2) {
+            // Calculate cheese boost based on available cheese and enemy health
+            int cheeseBoost = 0;
+            int globalCheese = rc.getGlobalCheese();
+            int rawCheese = rc.getRawCheese();
+            int totalCheese = globalCheese + rawCheese;
+
+            // Use cheese boost if we have enough and enemy is low health (finish them off)
+            // or if enemy is high health (deal more damage)
+            if (totalCheese > 200) {
+                // Spend up to 25 cheese for +5 damage (ceil(sqrt(25)) = 5)
+                cheeseBoost = Math.min(25, totalCheese / 10);
+            } else if (totalCheese > 100 && bestTarget != null && bestTarget.getHealth() <= 20) {
+                // Finish off low health enemies
+                cheeseBoost = Math.min(16, totalCheese / 8); // +4 damage
+            }
+
+            if (rc.canAttack(enemyLoc, cheeseBoost)) {
+                rc.attack(enemyLoc, cheeseBoost);
+                if (DEBUG) rc.setIndicatorString("DEFEND ATTACK! Boost:" + cheeseBoost);
+                return;
+            }
+        }
+
+        // Move toward the enemy to get in attack range
+        // But stay relatively close to king
+        if (m.kingLocation != null) {
+            int distToKing = here.distanceSquaredTo(m.kingLocation);
+            int enemyDistToKing = enemyLoc.distanceSquaredTo(m.kingLocation);
+
+            // Don't chase too far from king
+            if (distToKing > 100 && distToKing > enemyDistToKing) {
+                // We're farther from king than enemy - move toward king instead
+                MapInfo[] nearby = rc.senseNearbyMapInfos();
+                intelligentMoveToward(rc, m, m.kingLocation, nearby, threat);
+                return;
+            }
+        }
+
+        // Move toward the enemy
+        Direction toEnemy = here.directionTo(enemyLoc);
+        if (toEnemy != Direction.CENTER) {
+            // Try direct approach first
+            if (tryMoveInDirection(rc, toEnemy)) return;
+            // Try adjacent directions
+            if (tryMoveInDirection(rc, toEnemy.rotateLeft())) return;
+            if (tryMoveInDirection(rc, toEnemy.rotateRight())) return;
         }
     }
 }

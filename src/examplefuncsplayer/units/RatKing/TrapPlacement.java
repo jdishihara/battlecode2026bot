@@ -49,7 +49,6 @@ public class TrapPlacement {
                 trapLoc = trapLoc.add(dir);
             }
             if (rc.canPlaceRatTrap(trapLoc)) {
-                rc.placeRatTrap(trapLoc);
                 return;
             }
         }

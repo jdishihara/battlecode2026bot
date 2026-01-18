@@ -17,9 +17,10 @@ public class AttackerState {
     public static final int SYM_VERTICAL = 3;     // (x, h-1-y) - flip across horizontal axis
 
     // === CAT DISTANCE BANDS ===
-    public static final int CAT_PANIC_DIST_SQ = 9;     // ~3 tiles - hard flee
-    public static final int CAT_DANGER_DIST_SQ = 25;   // ~5 tiles - steer away strongly
-    public static final int CAT_CAUTION_DIST_SQ = 64;  // ~8 tiles - mild steering
+    // Expanded panic zone - cats can pounce 3 tiles + move, so 4 tiles is minimum safe distance
+    public static final int CAT_PANIC_DIST_SQ = 16;    // 4 tiles - hard flee (was 9/3 tiles)
+    public static final int CAT_DANGER_DIST_SQ = 36;   // 6 tiles - steer away strongly (was 25/5 tiles)
+    public static final int CAT_CAUTION_DIST_SQ = 64;  // 8 tiles - mild steering
     public static final int CAT_BAND_NONE = 0;
     public static final int CAT_BAND_CAUTION = 1;
     public static final int CAT_BAND_DANGER = 2;

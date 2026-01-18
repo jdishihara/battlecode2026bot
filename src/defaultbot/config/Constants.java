@@ -12,7 +12,7 @@ public final class Constants {
     public static final int CARRY_LIMIT = 20;
     public static final int LOW_CHEESE_THRESHOLD = 1500;
     public static final int CRITICAL_CHEESE_THRESHOLD = 300;
-    public static final int CAT_FLEE_RADIUS = 12;
+    public static final int CAT_FLEE_RADIUS = 7;
     public static final int DELIVERY_RADIUS = 1;
     public static final int SPAWN_INTERVAL = 6;
     public static final int MAX_TARGET_PURSUIT_TURNS = 30;
@@ -20,7 +20,7 @@ public final class Constants {
     public static final int MIN_NEAR_KING_HAULERS = 6;
     public static final int MIN_NEAR_KING_ATTACKERS = 6;
     public static final int NEAR_KING_COUNT_RADIUS = 25;
-    public static final int ENEMY_FLEE_RADIUS = 12;
+    public static final int ENEMY_FLEE_RADIUS = 5;
 
     // ===== RAT KING =====
     public static final int ALERT_RADIUS = 18;
@@ -71,7 +71,7 @@ public final class Constants {
     public static final int SQUEAK_RALLY_TO_ME = 7;           // NEW: call cluster to regroup
 
     // ===== DIRT DIGGING =====
-    public static final int DIG_MIN_CHEESE_HAULER = 500;
+    public static final int DIG_MIN_CHEESE_HAULER = 150;
     public static final int DIG_MIN_CHEESE_ATTACKER = 0;
 
     // ===== DIRECTIONS =====

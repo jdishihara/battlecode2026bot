@@ -39,6 +39,16 @@ public final class Constants {
     public static final int DEFENSIVE_TRAP_RADIUS = 2;
     public static final int KING_ATTACK_CHEESE_BOOST = 50;
 
+    // Hauler defense constants (when defending king instead of fleeing)
+    public static final int HAULER_DEFEND_RADIUS_SQ = 64;      // 8 tiles - haulers defend within this range of king
+    public static final int HAULER_ATTACK_CHEESE_BOOST = 25;   // Cheese to spend on attacks when defending
+    public static final int MIN_ALLIES_FOR_DEFENSE = 2;        // Minimum allies needed to engage enemies
+
+    // King mobility constants
+    public static final int KING_KITE_SAFE_DIST_SQ = 144;      // 12 tiles - maintain this distance from threats
+    public static final int KING_ENEMY_ESCAPE_RADIUS_SQ = 64;  // 8 tiles - escape when enemy rats this close
+    public static final int KING_SWARM_THRESHOLD = 3;          // Escape if this many enemies nearby
+
     // ===== COMBAT & SWARMING =====
     public static final int SQUEAK_COOLDOWN = 8;              // Rounds between squeaks (avoid cat attention)
     public static final int SQUEAK_LISTEN_ROUNDS = 5;         // How far back to read messages
@@ -71,7 +81,7 @@ public final class Constants {
     public static final int SQUEAK_RALLY_TO_ME = 7;           // NEW: call cluster to regroup
 
     // ===== DIRT DIGGING =====
-    public static final int DIG_MIN_CHEESE_HAULER = 50;
+    public static final int DIG_MIN_CHEESE_HAULER = 150;
     public static final int DIG_MIN_CHEESE_ATTACKER = 0;
 
     // ===== DIRECTIONS =====

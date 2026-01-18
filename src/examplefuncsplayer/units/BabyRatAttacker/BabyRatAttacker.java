@@ -100,23 +100,67 @@ public class BabyRatAttacker {
         m.adoptedCatLoc = false;
         m.broadcastedCat = false;
 
-        // Update cat memory if any cat seen this turn
+        // Update cat memory and velocity tracking if any cat seen this turn
         if (nearestCatAnyLoc != null) {
+            // Compute velocity if we have a recent previous sighting
+            if (m.lastCatLoc != null && roundNum - m.lastCatSeenRound <= 3) {
+                int roundDelta = roundNum - m.lastCatSeenRound;
+                if (roundDelta > 0) {
+                    // Store previous position for velocity calculation
+                    m.prevCatLoc = m.lastCatLoc;
+                    m.prevCatSeenRound = m.lastCatSeenRound;
+                    // Compute velocity (tiles per round, clamped to reasonable values)
+                    m.catVelX = Math.max(-2, Math.min(2, (nearestCatAnyLoc.x - m.lastCatLoc.x) / roundDelta));
+                    m.catVelY = Math.max(-2, Math.min(2, (nearestCatAnyLoc.y - m.lastCatLoc.y) / roundDelta));
+                }
+            } else {
+                // First sighting or stale data - reset velocity
+                m.catVelX = 0;
+                m.catVelY = 0;
+            }
+
             m.lastCatLoc = nearestCatAnyLoc;
             m.lastCatSeenRound = roundNum;
             m.adoptedCatLoc = false;  // Direct sighting, not adopted
+
+            // Predict where cat will be in 2 rounds (for proactive avoidance)
+            int predX = nearestCatAnyLoc.x + m.catVelX * 2;
+            int predY = nearestCatAnyLoc.y + m.catVelY * 2;
+            // Clamp to map bounds
+            predX = Math.max(0, Math.min(rc.getMapWidth() - 1, predX));
+            predY = Math.max(0, Math.min(rc.getMapHeight() - 1, predY));
+            m.predictedCatLoc = new MapLocation(predX, predY);
+        } else {
+            // No cat visible - decay prediction
+            m.predictedCatLoc = null;
         }
         // Note: Do NOT clear lastCatLoc if no cat seen - keep as memory
 
         // Set current turn cat info for movement layer
+        // Use worst-case between actual position and predicted position for danger assessment
         if (nearestCatAnyLoc != null) {
-            // Cat currently visible - use actual position and distance
+            // Cat currently visible - use actual position for avoidance target
             m.turnCatLoc = nearestCatAnyLoc;
-            if (nearestCatAnyDistSq <= CAT_PANIC_DIST_SQ) {
+
+            // Compute effective danger distance considering prediction
+            int effectiveDistSq = nearestCatAnyDistSq;
+
+            // If cat is moving toward us, use predicted location for danger assessment
+            if (m.predictedCatLoc != null && (m.catVelX != 0 || m.catVelY != 0)) {
+                int predictedDistSq = here.distanceSquaredTo(m.predictedCatLoc);
+                // If predicted location is closer, treat as more dangerous
+                if (predictedDistSq < effectiveDistSq) {
+                    effectiveDistSq = predictedDistSq;
+                    // Also consider avoiding the predicted path
+                    m.turnCatLoc = m.predictedCatLoc;
+                }
+            }
+
+            if (effectiveDistSq <= CAT_PANIC_DIST_SQ) {
                 m.turnCatBand = CAT_BAND_PANIC;
-            } else if (nearestCatAnyDistSq <= CAT_DANGER_DIST_SQ) {
+            } else if (effectiveDistSq <= CAT_DANGER_DIST_SQ) {
                 m.turnCatBand = CAT_BAND_DANGER;
-            } else if (nearestCatAnyDistSq <= CAT_CAUTION_DIST_SQ) {
+            } else if (effectiveDistSq <= CAT_CAUTION_DIST_SQ) {
                 m.turnCatBand = CAT_BAND_CAUTION;
             } else {
                 m.turnCatBand = CAT_BAND_NONE;
@@ -126,7 +170,12 @@ public class BabyRatAttacker {
             int roundsSinceSeen = roundNum - m.lastCatSeenRound;
             if (m.lastCatLoc != null && roundsSinceSeen <= CAT_MEMORY_TTL) {
                 // Fresh memory - use as "virtual cat" for avoidance
-                m.turnCatLoc = m.lastCatLoc;
+                // If we have velocity, use predicted position
+                if (m.predictedCatLoc != null && roundsSinceSeen <= 2) {
+                    m.turnCatLoc = m.predictedCatLoc;
+                } else {
+                    m.turnCatLoc = m.lastCatLoc;
+                }
                 // Very recent memory (<=2 rounds) uses DANGER band, older uses CAUTION
                 m.turnCatBand = (roundsSinceSeen <= CAT_MEMORY_DANGER_TTL)
                     ? CAT_BAND_DANGER : CAT_BAND_CAUTION;
@@ -565,22 +614,9 @@ public class BabyRatAttacker {
 
         int distToTarget = here.distanceSquaredTo(symmetryTarget);
 
-        // Only spread out when FAR from target (> 10 tiles away)
-        // When close, converge on the exact location to properly check corners
-        MapLocation moveTarget;
-        if (distToTarget > 100) {
-            // Far away - add slight spread to avoid traffic jams
-            int spreadX = (rc.getID() % 5) - 2;  // -2 to +2 (smaller spread)
-            int spreadY = ((rc.getID() / 5) % 5) - 2;
-            moveTarget = new MapLocation(
-                Math.max(2, Math.min(rc.getMapWidth() - 3, symmetryTarget.x + spreadX)),
-                Math.max(2, Math.min(rc.getMapHeight() - 3, symmetryTarget.y + spreadY))
-            );
-        } else {
-            // Close to target - go directly to the predicted location
-            // This ensures rats actually reach corners
-            moveTarget = symmetryTarget;
-        }
+        // No spread - all rats converge on exact symmetry target
+        // This keeps the cluster tight for better combat when king is found
+        MapLocation moveTarget = symmetryTarget;
 
         m.currentTarget = moveTarget;
 

@@ -14,48 +14,43 @@ public class AttackerFormation {
 
     /**
      * Check if this rat is the local leader for the given objective.
-     * Leader is chosen by: smallest distance to objective, tie-break by smallest ID.
+     * Leader is chosen by: LOWEST ID among nearby allies (stable leadership).
+     *
+     * This prevents leader thrashing when rats move around - the same rat
+     * leads consistently until it gets stuck or leaves the group.
      *
      * STUCK HANDLING: If this rat is on cooldown (was stuck as leader), it excludes
      * itself from leadership consideration to let others lead.
      *
      * @param rc RobotController
      * @param m Mem state (for stuck cooldown)
-     * @param objectiveLoc The objective location
+     * @param objectiveLoc The objective location (unused but kept for API compatibility)
      * @param nearbyAllies Pre-sensed nearby allies (to save bytecode)
      * @return true if this rat is the leader
      */
     public static boolean amILeader(RobotController rc, Mem m, MapLocation objectiveLoc, RobotInfo[] nearbyAllies)
             throws GameActionException {
-        MapLocation here = rc.getLocation();
         int myId = rc.getID();
-        int myDistSq = here.distanceSquaredTo(objectiveLoc);
 
         // If on cooldown from being stuck, exclude self from leadership
-        boolean selfExcluded = m.stuckCooldown > 0;
+        if (m.stuckCooldown > 0) {
+            return false;
+        }
 
-        int bestDistSq = selfExcluded ? Integer.MAX_VALUE : myDistSq;
-        int bestId = selfExcluded ? Integer.MAX_VALUE : myId;
-        boolean selfIsBest = !selfExcluded;
+        // Find lowest ID among nearby baby rat allies
+        int lowestId = myId;
 
         for (RobotInfo ally : nearbyAllies) {
             if (ally.getType() != UnitType.BABY_RAT) continue;
 
-            int allyDistSq = ally.getLocation().distanceSquaredTo(objectiveLoc);
             int allyId = ally.getID();
-
-            // Compare: smaller dist wins, tie-break by smaller ID
-            boolean isBetter = (allyDistSq < bestDistSq) ||
-                               (allyDistSq == bestDistSq && allyId < bestId);
-
-            if (isBetter) {
-                bestDistSq = allyDistSq;
-                bestId = allyId;
-                selfIsBest = false;
+            if (allyId < lowestId) {
+                lowestId = allyId;
             }
         }
 
-        return selfIsBest;
+        // We're leader if we have the lowest ID
+        return lowestId == myId;
     }
 
     /**
@@ -147,8 +142,9 @@ public class AttackerFormation {
         MapLocation here = rc.getLocation();
         int distToParent = here.distanceSquaredTo(sourceLoc);
 
-        // Distance > 2 tiles means distSq > 4 (e.g., distSq=5 is ~2.2 tiles away)
-        boolean tooFarFromParent = distToParent > 4;
+        // Distance > 1.4 tiles means distSq > 2 (tighter formation)
+        // This keeps rats closer together for better combat effectiveness
+        boolean tooFarFromParent = distToParent > 2;
 
         // === HARD-FOLLOW MODE: More than 2 tiles away from parent ===
         if (tooFarFromParent) {

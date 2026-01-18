@@ -65,8 +65,8 @@ public class HaulerThreat {
                 }
             }
 
-            // NEAR: cat within flee radius
-            if (catThreat == ThreatLevel.NONE) {
+            // NEAR: cat within flee radius (only if actually within the radius)
+            if (catThreat == ThreatLevel.NONE && catDistSq <= CAT_FLEE_RADIUS * CAT_FLEE_RADIUS) {
                 catThreat = ThreatLevel.NEAR;
             }
         }

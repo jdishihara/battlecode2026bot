@@ -65,6 +65,11 @@ public class RatKing {
         }
 
         // ===== STATE TRANSITIONS =====
+        // More aggressive state transitions for better defense
+        final int ENEMY_RAT_ESCAPE_RADIUS_SQ = 64;  // 8 tiles - escape earlier from enemy rats
+        final int CAT_ALERT_RADIUS_SQ = ALERT_RADIUS * ALERT_RADIUS;
+        final int ENEMY_RAT_ALERT_RADIUS_SQ = 144;  // 12 tiles
+
         if (nearestCat == null && nearestEnemyRat == null) {
             KingRuntimeState.safeRoundsCounter++;
             if (KingRuntimeState.safeRoundsCounter >= 5) {
@@ -72,10 +77,21 @@ public class RatKing {
             }
         } else {
             KingRuntimeState.safeRoundsCounter = 0;
-            if (catDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS ||
-                    enemyRatDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS) {
+
+            // Escape conditions - more aggressive thresholds
+            boolean catTooClose = (catDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS);
+            boolean enemyRatTooClose = (enemyRatDistSq <= ENEMY_RAT_ESCAPE_RADIUS_SQ);
+
+            // Also escape if multiple enemy rats are nearby (swarming)
+            int nearbyEnemyCount = Sensing.countNearbyEnemyRats(rc, 100); // within 10 tiles
+            boolean enemySwarm = nearbyEnemyCount >= 3;
+
+            if (catTooClose || enemyRatTooClose || enemySwarm) {
                 KingRuntimeState.kingState = KingState.ESCAPE;
+            } else if (catDistSq <= CAT_ALERT_RADIUS_SQ || enemyRatDistSq <= ENEMY_RAT_ALERT_RADIUS_SQ) {
+                KingRuntimeState.kingState = KingState.ALERT;
             } else {
+                // Distant threats - stay alert but less urgent
                 KingRuntimeState.kingState = KingState.ALERT;
             }
         }
