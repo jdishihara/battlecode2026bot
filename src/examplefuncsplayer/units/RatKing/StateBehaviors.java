@@ -10,6 +10,78 @@ import static examplefuncsplayer.config.Shared.*;
  */
 public class StateBehaviors {
 
+    /**
+     * ROAMING state: Mobile king that drifts toward cheese-rich areas.
+     * - Move every 3-5 rounds even when "safe"
+     * - Never stay stationary for more than 5 rounds unless boxed in
+     * - Continue spawning rats and basic upkeep
+     */
+    public static void runKingRoamingState(RobotController rc, int globalCheese, int spawnCost,
+                                           int turnCount, int roundNum) throws GameActionException {
+        int minCheeseForSpawn = spawnCost + 100;
+
+        // Try to dig dirt during roaming to build reserves (less frequent than safe)
+        if (turnCount % 8 == 0 && rc.getDirt() < 10) {
+            DirtWallDefense.tryDigDirt(rc);
+        }
+
+        // === ROAMING MOVEMENT LOGIC ===
+        boolean shouldMove = false;
+
+        // Condition 1: Time-based movement (every 3-5 rounds)
+        int roundsSinceLastMove = roundNum - KingRuntimeState.lastRoamingMoveRound;
+        if (roundsSinceLastMove >= KingRuntimeState.ROAMING_MOVE_INTERVAL) {
+            shouldMove = true;
+        }
+
+        // Condition 2: Force movement if stationary too long
+        if (KingRuntimeState.stationaryRounds >= KingRuntimeState.MAX_STATIONARY_ROUNDS) {
+            shouldMove = true;
+        }
+
+        // Check if boxed in (don't try to move if we can't)
+        boolean boxedIn = Movement.isKingBoxedIn(rc);
+
+        if (shouldMove && !boxedIn && rc.isMovementReady()) {
+            // Get or update roaming target
+            if (KingRuntimeState.roamingTarget == null ||
+                rc.getLocation().distanceSquaredTo(KingRuntimeState.roamingTarget) <= 9 ||
+                roundsSinceLastMove > 15) {
+                // Need new target
+                KingRuntimeState.roamingTarget = Sensing.getRoamingTarget(rc);
+            }
+
+            // Attempt roaming movement
+            if (KingRuntimeState.roamingTarget != null) {
+                boolean moved = Movement.tryRoamingMove(rc, KingRuntimeState.roamingTarget);
+                if (moved) {
+                    KingRuntimeState.lastRoamingMoveRound = roundNum;
+                    KingRuntimeState.stationaryRounds = 0;
+                }
+            }
+        }
+
+        // === SPAWNING LOGIC (same as SAFE state) ===
+        int nearbyBabies = Sensing.countAlliedBabyRatsNearKing(rc, NEAR_KING_COUNT_RADIUS);
+        int desiredNearKingBabies = MIN_NEAR_KING_HAULERS + MIN_NEAR_KING_ATTACKERS;
+        boolean lowRats = nearbyBabies < Math.max(desiredNearKingBabies, MIN_DEFENDERS_NEAR_KING);
+
+        boolean enoughCheese = globalCheese >= minCheeseForSpawn && globalCheese >= CRITICAL_CHEESE_THRESHOLD;
+
+        if (lowRats && enoughCheese) {
+            Movement.trySpawnRat(rc);
+            return;
+        }
+
+        if (turnCount <= 5 && globalCheese >= minCheeseForSpawn) {
+            Movement.trySpawnRat(rc);
+        } else if (globalCheese > LOW_CHEESE_THRESHOLD &&
+                globalCheese >= minCheeseForSpawn &&
+                turnCount % SPAWN_INTERVAL == 0) {
+            Movement.trySpawnRat(rc);
+        }
+    }
+
     public static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount,
                                  MapLocation enemyRatLocation) throws GameActionException {
         int minCheeseForSpawn = spawnCost + 100;

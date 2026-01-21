@@ -196,4 +196,97 @@ public class Movement {
             }
         }
     }
+
+    /**
+     * Roaming movement: drift toward cheese-rich areas while staying safe.
+     * Called when king is in ROAMING state.
+     *
+     * @param target The target location (cheese-rich area or mine location)
+     * @return true if movement occurred
+     */
+    public static boolean tryRoamingMove(RobotController rc, MapLocation target) throws GameActionException {
+        if (!rc.isMovementReady()) return false;
+        if (target == null) return false;
+
+        MapLocation kingLoc = rc.getLocation();
+        int mapWidth = rc.getMapWidth();
+        int mapHeight = rc.getMapHeight();
+        MapInfo[] nearby = rc.senseNearbyMapInfos();
+
+        // If already at or very close to target, don't move
+        if (kingLoc.distanceSquaredTo(target) <= 4) return false;
+
+        Direction toTarget = kingLoc.directionTo(target);
+        if (toTarget == Direction.CENTER) return false;
+
+        // Consider directions toward target and nearby alternatives
+        Direction[] candidates = {
+            toTarget,
+            toTarget.rotateLeft(),
+            toTarget.rotateRight(),
+            toTarget.rotateLeft().rotateLeft(),
+            toTarget.rotateRight().rotateRight()
+        };
+
+        Direction bestDir = null;
+        int bestScore = Integer.MIN_VALUE;
+
+        for (Direction dir : candidates) {
+            if (!rc.canMove(dir)) continue;
+
+            MapLocation newLoc = kingLoc.add(dir);
+            int score = 0;
+
+            // Score: Progress toward target
+            int currentDistSq = kingLoc.distanceSquaredTo(target);
+            int newDistSq = newLoc.distanceSquaredTo(target);
+            score += 3 * (currentDistSq - newDistSq);
+
+            // Penalty for edges/corners (can get trapped)
+            if (newLoc.x <= 3 || newLoc.x >= mapWidth - 4 ||
+                newLoc.y <= 3 || newLoc.y >= mapHeight - 4) {
+                score -= 80;
+            }
+
+            // Bonus for open areas (more escape routes)
+            int passableNeighbors = countPassableNeighbors(newLoc, nearby);
+            if (passableNeighbors >= 5) {
+                score += 30;
+            } else if (passableNeighbors <= 2) {
+                score -= 60;
+            }
+
+            // Prefer staying somewhat central
+            MapLocation center = new MapLocation(mapWidth / 2, mapHeight / 2);
+            int newCenterDist = newLoc.distanceSquaredTo(center);
+            int mapDiagonalSq = (mapWidth * mapWidth + mapHeight * mapHeight) / 4;
+            if (newCenterDist < mapDiagonalSq / 4) {
+                score += 15; // Bonus for being relatively central
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestDir = dir;
+            }
+        }
+
+        if (bestDir != null && rc.canMove(bestDir)) {
+            rc.move(bestDir);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Check if king is boxed in with no good movement options.
+     */
+    public static boolean isKingBoxedIn(RobotController rc) throws GameActionException {
+        int movableDirections = 0;
+        for (Direction dir : DIRECTIONS) {
+            if (rc.canMove(dir)) {
+                movableDirections++;
+            }
+        }
+        return movableDirections <= 1;
+    }
 }

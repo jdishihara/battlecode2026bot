@@ -23,10 +23,15 @@ public final class Shared {
     public static final int ENEMY_RAT_Y_INDEX = 7;
     public static final int ENEMY_THREAT_LEVEL = 8;  // 0 = none, 1 = nearby, 2 = attacking
 
+    // ===== MINE TRACKING (used by KingConstants and DefenderMining) =====
+    // Slots 9-25 reserved for mine tracking (count + up to 8 mines * 2 coords)
+    // DO NOT use slots 9-25 for other purposes!
+
     // ===== ENEMY KING TRACKING =====
-    public static final int ENEMY_KING_X_INDEX = 9;
-    public static final int ENEMY_KING_Y_INDEX = 10;
-    public static final int ENEMY_KING_SEEN_ROUND_INDEX = 11;  // Round number (mod 1000)
+    // Moved to slots 30-32 to avoid conflict with mine tracking (slots 9-25)
+    public static final int ENEMY_KING_X_INDEX = 30;
+    public static final int ENEMY_KING_Y_INDEX = 31;
+    public static final int ENEMY_KING_SEEN_ROUND_INDEX = 32;  // Round number (mod 1000)
 
     // ===== SYMMETRY TRACKING (CLUSTERED SEARCH) =====
     public static final int CURRENT_SYMMETRY_INDEX = 12;       // 0=unknown, 1=rot, 2=horiz, 3=vert
@@ -52,7 +57,9 @@ public final class Shared {
     public static final int NUM_INITIAL_ATTACKERS = 7; // First N baby rats are attackers, rest are haulers
 
     // ===== RESERVED FOR FUTURE USE =====
-    // Indices 30-63 available for expansion (23-28 used by ALERT system in Constants.java)
+    // Indices 33-63 available for expansion
+    // Note: 23-28 used by ALERT system in Constants.java
+    // Note: 30-32 used by ENEMY_KING tracking above
 
     // ===== SQUEAK MESSAGE ENCODING =====
     // Compact format: type (0-7, 3 bits) | x (0-63, 6 bits) | y (0-63, 6 bits)

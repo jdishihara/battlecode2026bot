@@ -64,6 +64,14 @@ public class RatKing {
             enemyRatDistSq = myLocation.distanceSquaredTo(enemyRatLocation);
         }
 
+        // ===== TRACK STATIONARY ROUNDS =====
+        if (KingRuntimeState.lastKingPosition != null && KingRuntimeState.lastKingPosition.equals(myLocation)) {
+            KingRuntimeState.stationaryRounds++;
+        } else {
+            KingRuntimeState.stationaryRounds = 0;
+        }
+        KingRuntimeState.lastKingPosition = myLocation;
+
         // ===== STATE TRANSITIONS =====
         // More aggressive state transitions for better defense
         final int ENEMY_RAT_ESCAPE_RADIUS_SQ = 64;  // 8 tiles - escape earlier from enemy rats
@@ -72,8 +80,12 @@ public class RatKing {
 
         if (nearestCat == null && nearestEnemyRat == null) {
             KingRuntimeState.safeRoundsCounter++;
+
+            // Transition to ROAMING instead of SAFE after safe period
+            // ROAMING: Move every 3-5 rounds, never stationary > 5 rounds
             if (KingRuntimeState.safeRoundsCounter >= 5) {
-                KingRuntimeState.kingState = KingState.SAFE;
+                // Use ROAMING as the default "safe" state for mobile king
+                KingRuntimeState.kingState = KingState.ROAMING;
             }
         } else {
             KingRuntimeState.safeRoundsCounter = 0;
@@ -127,6 +139,9 @@ public class RatKing {
         switch (KingRuntimeState.kingState) {
             case SAFE:
                 StateBehaviors.runKingSafeState(rc, globalCheese, spawnCost, turnCount, enemyRatLocation);
+                break;
+            case ROAMING:
+                StateBehaviors.runKingRoamingState(rc, globalCheese, spawnCost, turnCount, roundNum);
                 break;
             case ALERT:
                 StateBehaviors.runKingAlertState(rc, globalCheese, spawnCost, enemyRatLocation, catLocation, catDistSq, roundNum);

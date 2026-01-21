@@ -5,6 +5,7 @@ package examplefuncsplayer.units.RatKing;
  */
 public enum KingState {
     SAFE,
+    ROAMING,  // Mobile king: drift toward cheese-rich areas
     ALERT,
     ESCAPE
 }
