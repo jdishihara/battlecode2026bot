@@ -17,10 +17,9 @@ public class AttackerState {
     public static final int SYM_VERTICAL = 3;     // (x, h-1-y) - flip across horizontal axis
 
     // === CAT DISTANCE BANDS ===
-    // Expanded panic zone - cats can pounce 3 tiles + move, so 4 tiles is minimum safe distance
-    public static final int CAT_PANIC_DIST_SQ = 16;    // 4 tiles - hard flee (was 9/3 tiles)
-    public static final int CAT_DANGER_DIST_SQ = 36;   // 6 tiles - steer away strongly (was 25/5 tiles)
-    public static final int CAT_CAUTION_DIST_SQ = 64;  // 8 tiles - mild steering
+    public static final int CAT_PANIC_DIST_SQ = 9;     // ~3 tiles - hard flee
+    public static final int CAT_DANGER_DIST_SQ = 25;   // ~5 tiles - steer away strongly
+    public static final int CAT_CAUTION_DIST_SQ = 64;  // ~8 tiles - mild steering
     public static final int CAT_BAND_NONE = 0;
     public static final int CAT_BAND_CAUTION = 1;
     public static final int CAT_BAND_DANGER = 2;
@@ -61,6 +60,14 @@ public class AttackerState {
         Direction.NORTH, Direction.NORTHEAST, Direction.EAST, Direction.SOUTHEAST,
         Direction.SOUTH, Direction.SOUTHWEST, Direction.WEST, Direction.NORTHWEST
     };
+
+    // === TIGHT SWARM CLUSTERING ===
+    // Attackers form a tight group, almost adjacent to each other, to gang up on enemies
+    public static final int CLUSTER_ADJACENCY_BONUS = 100;   // Score bonus per adjacent ally
+    public static final int CLUSTER_NEAR_BONUS = 30;         // Score bonus per ally within 2 tiles (distSq <= 8)
+    public static final int CLUSTER_MAX_SPREAD_SQ = 8;       // Max distSq to stay clustered (sqrt(8) ~= 2.8 tiles)
+    public static final int CLUSTER_REGROUP_THRESHOLD = 2;   // Min allies adjacent before we prioritize regrouping
+    public static final int CLUSTER_SENSE_RADIUS_SQ = 20;    // Radius to sense allies for clustering
 
     /** Check if a squeak message is a formation message. */
     public static boolean isFormationMsg(int msg) {

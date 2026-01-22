@@ -10,78 +10,6 @@ import static examplefuncsplayer.config.Shared.*;
  */
 public class StateBehaviors {
 
-    /**
-     * ROAMING state: Mobile king that drifts toward cheese-rich areas.
-     * - Move every 3-5 rounds even when "safe"
-     * - Never stay stationary for more than 5 rounds unless boxed in
-     * - Continue spawning rats and basic upkeep
-     */
-    public static void runKingRoamingState(RobotController rc, int globalCheese, int spawnCost,
-                                           int turnCount, int roundNum) throws GameActionException {
-        int minCheeseForSpawn = spawnCost + 100;
-
-        // Try to dig dirt during roaming to build reserves (less frequent than safe)
-        if (turnCount % 8 == 0 && rc.getDirt() < 10) {
-            DirtWallDefense.tryDigDirt(rc);
-        }
-
-        // === ROAMING MOVEMENT LOGIC ===
-        boolean shouldMove = false;
-
-        // Condition 1: Time-based movement (every 3-5 rounds)
-        int roundsSinceLastMove = roundNum - KingRuntimeState.lastRoamingMoveRound;
-        if (roundsSinceLastMove >= KingRuntimeState.ROAMING_MOVE_INTERVAL) {
-            shouldMove = true;
-        }
-
-        // Condition 2: Force movement if stationary too long
-        if (KingRuntimeState.stationaryRounds >= KingRuntimeState.MAX_STATIONARY_ROUNDS) {
-            shouldMove = true;
-        }
-
-        // Check if boxed in (don't try to move if we can't)
-        boolean boxedIn = Movement.isKingBoxedIn(rc);
-
-        if (shouldMove && !boxedIn && rc.isMovementReady()) {
-            // Get or update roaming target
-            if (KingRuntimeState.roamingTarget == null ||
-                rc.getLocation().distanceSquaredTo(KingRuntimeState.roamingTarget) <= 9 ||
-                roundsSinceLastMove > 15) {
-                // Need new target
-                KingRuntimeState.roamingTarget = Sensing.getRoamingTarget(rc);
-            }
-
-            // Attempt roaming movement
-            if (KingRuntimeState.roamingTarget != null) {
-                boolean moved = Movement.tryRoamingMove(rc, KingRuntimeState.roamingTarget);
-                if (moved) {
-                    KingRuntimeState.lastRoamingMoveRound = roundNum;
-                    KingRuntimeState.stationaryRounds = 0;
-                }
-            }
-        }
-
-        // === SPAWNING LOGIC (same as SAFE state) ===
-        int nearbyBabies = Sensing.countAlliedBabyRatsNearKing(rc, NEAR_KING_COUNT_RADIUS);
-        int desiredNearKingBabies = MIN_NEAR_KING_HAULERS + MIN_NEAR_KING_ATTACKERS;
-        boolean lowRats = nearbyBabies < Math.max(desiredNearKingBabies, MIN_DEFENDERS_NEAR_KING);
-
-        boolean enoughCheese = globalCheese >= minCheeseForSpawn && globalCheese >= CRITICAL_CHEESE_THRESHOLD;
-
-        if (lowRats && enoughCheese) {
-            Movement.trySpawnRat(rc);
-            return;
-        }
-
-        if (turnCount <= 5 && globalCheese >= minCheeseForSpawn) {
-            Movement.trySpawnRat(rc);
-        } else if (globalCheese > LOW_CHEESE_THRESHOLD &&
-                globalCheese >= minCheeseForSpawn &&
-                turnCount % SPAWN_INTERVAL == 0) {
-            Movement.trySpawnRat(rc);
-        }
-    }
-
     public static void runKingSafeState(RobotController rc, int globalCheese, int spawnCost, int turnCount,
                                  MapLocation enemyRatLocation) throws GameActionException {
         int minCheeseForSpawn = spawnCost + 100;
@@ -108,10 +36,45 @@ public class StateBehaviors {
 
         if (turnCount <= 5 && globalCheese >= minCheeseForSpawn) {
             Movement.trySpawnRat(rc);
-        } else if (globalCheese > LOW_CHEESE_THRESHOLD &&
-                globalCheese >= minCheeseForSpawn &&
-                turnCount % SPAWN_INTERVAL == 0) {
+        } else if (globalCheese > LOW_CHEESE_THRESHOLD && globalCheese >= minCheeseForSpawn) {
+            // Use slower spawn interval for hauler phases (0, 2), normal for attacker phases (1, 3)
+            boolean isHaulerPhase = SpawnPhaseManager.isHaulerPhase(rc);
+            int interval = isHaulerPhase ? HAULER_SPAWN_INTERVAL : SPAWN_INTERVAL;
+            if (turnCount % interval == 0) {
+                Movement.trySpawnRat(rc);
+            }
+        }
+    }
+
+    /**
+     * Roaming state: King moves toward cheese-rich areas when safe.
+     */
+    public static void runKingRoamingState(RobotController rc, int globalCheese, int spawnCost,
+                                           int turnCount, int roundNum) throws GameActionException {
+        int minCheeseForSpawn = spawnCost + 100;
+
+        // Still spawn rats while roaming
+        int nearbyBabies = Sensing.countAlliedBabyRatsNearKing(rc, NEAR_KING_COUNT_RADIUS);
+        int desiredNearKingBabies = MIN_NEAR_KING_HAULERS + MIN_NEAR_KING_ATTACKERS;
+        boolean lowRats = nearbyBabies < Math.max(desiredNearKingBabies, MIN_DEFENDERS_NEAR_KING);
+
+        boolean enoughCheese = globalCheese >= minCheeseForSpawn && globalCheese >= CRITICAL_CHEESE_THRESHOLD;
+
+        if (lowRats && enoughCheese) {
             Movement.trySpawnRat(rc);
+        }
+
+        // Try to dig dirt to build reserves
+        if (turnCount % 5 == 0 && rc.getDirt() < 10) {
+            DirtWallDefense.tryDigDirt(rc);
+        }
+
+        // Move toward cheese-rich areas
+        if (rc.isMovementReady() && turnCount % 3 == 0) {
+            MapLocation roamTarget = Sensing.getRoamingTarget(rc);
+            if (roamTarget != null) {
+                Movement.tryRoamingMove(rc, roamTarget);
+            }
         }
     }
 
@@ -122,37 +85,6 @@ public class StateBehaviors {
         int minCheeseForSpawn = spawnCost + 200;
 
         TrapPlacement.placeDefensiveTraps(rc, enemyRatLocation);
-
-        MapLocation kingLoc = rc.getLocation();
-        int enemyDistSq = enemyRatLocation != null ? kingLoc.distanceSquaredTo(enemyRatLocation) : Integer.MAX_VALUE;
-
-        // Proactive kiting - maintain distance from threats
-        final int KITE_SAFE_DIST_SQ = 144; // 12 tiles
-        final int KITE_CAT_SAFE_DIST_SQ = 196; // 14 tiles (cats more dangerous)
-
-        boolean shouldKite = false;
-        MapLocation kiteFrom = null;
-
-        // Kite from cat if it's getting close
-        if (catLocation != null && catDistSq < KITE_CAT_SAFE_DIST_SQ) {
-            shouldKite = true;
-            kiteFrom = catLocation;
-        }
-        // Kite from enemy rats if close and no cat threat
-        else if (enemyRatLocation != null && enemyDistSq < KITE_SAFE_DIST_SQ && catLocation == null) {
-            shouldKite = true;
-            kiteFrom = enemyRatLocation;
-        }
-
-        // Try proactive kiting before placing defenses
-        if (shouldKite && rc.isMovementReady()) {
-            boolean kited = Movement.tryProactiveKite(rc, kiteFrom,
-                    catLocation != null ? KITE_CAT_SAFE_DIST_SQ : KITE_SAFE_DIST_SQ);
-            if (kited) {
-                // Successfully moved, update position for trap placement
-                kingLoc = rc.getLocation();
-            }
-        }
 
         if (catLocation != null) {
             final int MID_RANGE = 15;
@@ -165,11 +97,6 @@ public class StateBehaviors {
             }
         }
 
-        // Place rat traps against enemy rats
-        if (enemyRatLocation != null && enemyDistSq <= 100) {
-            TrapPlacement.placeDefensiveTraps(rc, enemyRatLocation);
-        }
-
         if (globalCheese > alertSpawnThreshold && globalCheese >= minCheeseForSpawn) {
             Movement.trySpawnRat(rc);
         }
@@ -177,70 +104,60 @@ public class StateBehaviors {
 
     public static void runKingEscapeState(RobotController rc, MapLocation catLocation, int catDistSq,
                                    int roundNum, int globalCheese, MapLocation enemyRatLocation) throws GameActionException {
-        MapLocation kingLoc = rc.getLocation();
-        int enemyDistSq = enemyRatLocation != null ? kingLoc.distanceSquaredTo(enemyRatLocation) : Integer.MAX_VALUE;
+        int enemyRatDistSq = enemyRatLocation != null ? rc.getLocation().distanceSquaredTo(enemyRatLocation) : Integer.MAX_VALUE;
+        boolean hasCatThreat = catLocation != null;
+        boolean hasRatThreat = enemyRatLocation != null;
 
-        // Determine the primary threat
-        MapLocation primaryThreat = catLocation;
-        int primaryThreatDistSq = catDistSq;
+        // Determine primary threat (closest one)
+        MapLocation primaryThreat = null;
+        boolean primaryIsCat = false;
 
-        // If no cat or enemy is closer, prioritize enemy
-        if (catLocation == null || (enemyRatLocation != null && enemyDistSq < catDistSq)) {
+        if (hasCatThreat && hasRatThreat) {
+            if (catDistSq <= enemyRatDistSq) {
+                primaryThreat = catLocation;
+                primaryIsCat = true;
+            } else {
+                primaryThreat = enemyRatLocation;
+            }
+        } else if (hasCatThreat) {
+            primaryThreat = catLocation;
+            primaryIsCat = true;
+        } else if (hasRatThreat) {
             primaryThreat = enemyRatLocation;
-            primaryThreatDistSq = enemyDistSq;
         }
 
+        if (primaryThreat == null) {
+            KingRuntimeState.kingState = KingState.ALERT;
+            return;
+        }
+
+        int primaryDistSq = primaryIsCat ? catDistSq : enemyRatDistSq;
         boolean canAttemptEscape = (roundNum - KingRuntimeState.lastEscapeRound >= ESCAPE_COOLDOWN) ||
-                (primaryThreatDistSq <= PANIC_RADIUS * PANIC_RADIUS);
+                (primaryDistSq <= PANIC_RADIUS * PANIC_RADIUS);
 
-        if (canAttemptEscape && primaryThreat != null) {
-            // PRIORITY 0: If cornered, try to dig an escape route
-            if (!rc.isMovementReady() || !hasEscapeRoute(rc, primaryThreat)) {
-                Movement.tryDigEscapeRoute(rc, primaryThreat);
-            }
-
-            // PRIORITY 1: Try to place dirt wall between us and threat
-            if (catLocation != null) {
+        if (canAttemptEscape) {
+            if (primaryIsCat) {
+                // Escaping from cat: dirt walls and cat traps
                 boolean placedDirtWall = DirtWallDefense.tryPlaceDirtWall(rc, catLocation, roundNum);
-
-                // PRIORITY 2: If no dirt available, fall back to cat trap
                 if (!placedDirtWall) {
                     TrapPlacement.tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
                 }
+            } else {
+                // Escaping from enemy rat: place rat traps in retreat path
+                TrapPlacement.placeTrapsInRetreatPath(rc, enemyRatLocation);
             }
 
-            // Place defensive rat traps against enemy rats
-            if (enemyRatLocation != null && globalCheese >= 150) {
+            // Also place defensive rat traps if we have cheese and there are enemy rats
+            if (globalCheese >= 200 && enemyRatLocation != null) {
                 TrapPlacement.placeDefensiveTraps(rc, enemyRatLocation);
             }
 
-            // PRIORITY 3: Move away from threats (considers both cat and enemy)
-            boolean escaped = Movement.tryKingEscapeMultipleThreat(rc, catLocation, enemyRatLocation);
-
-            // If couldn't move, try digging again
-            if (!escaped && rc.isActionReady()) {
-                Movement.tryDigEscapeRoute(rc, primaryThreat);
-            }
-
+            // Move away from the primary threat
+            Movement.tryKingEscapeFromThreat(rc, primaryThreat);
             KingRuntimeState.lastEscapeRound = roundNum;
+
             KingRuntimeState.kingState = KingState.ALERT;
         }
-    }
-
-    /**
-     * Check if king has at least one escape route away from the threat.
-     */
-    private static boolean hasEscapeRoute(RobotController rc, MapLocation threat) throws GameActionException {
-        MapLocation kingLoc = rc.getLocation();
-        Direction awayDir = threat.directionTo(kingLoc);
-        if (awayDir == Direction.CENTER) return true;
-
-        // Check if we can move in escape directions
-        Direction[] escapeDirs = {awayDir, awayDir.rotateLeft(), awayDir.rotateRight()};
-        for (Direction dir : escapeDirs) {
-            if (rc.canMove(dir)) return true;
-        }
-        return false;
     }
 
     public static boolean isInBackstabMode(RobotController rc) throws GameActionException {

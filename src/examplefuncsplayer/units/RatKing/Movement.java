@@ -18,6 +18,14 @@ public class Movement {
     }
 
     /**
+     * Escape from a threat - alias for tryKingEscape.
+     */
+    public static Direction tryKingEscapeFromThreat(RobotController rc, MapLocation threatLocation) throws GameActionException {
+        boolean moved = tryKingEscapeMultipleThreat(rc, threatLocation, null);
+        return moved ? rc.getLocation().directionTo(threatLocation).opposite() : null;
+    }
+
+    /**
      * Try to escape from multiple threats (cat and/or enemy rats).
      * Considers both threats when choosing escape direction.
      */

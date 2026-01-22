@@ -26,7 +26,7 @@ public class HaulerScouting {
     public static final int MAX_MINE_DISTANCE_SQ = 900;  // 30 tiles
 
     /** What fraction of rats should scout when we need more mines (1 in N rats) */
-    public static final int SCOUT_RATIO = 3;  // 1 in 3 rats scout
+    public static final int SCOUT_RATIO = 10;  // 1 in 10 rats scout - most should be hauling
 
     /** After this many rounds, stop scouting and just use what we have */
     public static final int MAX_SCOUT_ROUNDS = 300;

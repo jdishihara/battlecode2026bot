@@ -66,13 +66,6 @@ public class AttackerMemory {
         public boolean adoptedCatLoc = false;         // True if lastCatLoc came from squeak (for debug)
         public boolean broadcastedCat = false;        // True if we broadcasted cat this turn (for debug)
 
-        // === CAT VELOCITY PREDICTION ===
-        public MapLocation prevCatLoc = null;         // Cat location from previous sighting
-        public int prevCatSeenRound = -100;           // Round of previous sighting
-        public int catVelX = 0;                       // Estimated cat velocity X (tiles per round)
-        public int catVelY = 0;                       // Estimated cat velocity Y (tiles per round)
-        public MapLocation predictedCatLoc = null;    // Where we think cat will be
-
         // === CURRENT TURN CAT INFO (for movement layer) ===
         public MapLocation turnCatLoc = null;         // Cat location this turn (null if none)
         public int turnCatBand = AttackerState.CAT_BAND_NONE;  // Distance band this turn

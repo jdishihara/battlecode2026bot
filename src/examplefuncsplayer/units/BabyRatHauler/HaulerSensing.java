@@ -10,11 +10,11 @@ import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
  */
 public class HaulerSensing {
 
-    // Shared array indices for mine locations (use indices 0-7 for up to 4 mines, 2 ints each)
-    // Format: index 0-1 = mine 1 (x+1 in 0, y+1 in 1), index 2-3 = mine 2, etc.
+    // Shared array indices for mine locations - MUST MATCH HaulerMining.java
+    // Slots 10-25 for up to 8 mines (2 slots each: x+1, y+1)
     // Value of 0 means no mine stored at that slot (we use 1-indexed coords)
-    public static final int MINE_ARRAY_START = 0;
-    public static final int MAX_SHARED_MINES = 4;
+    public static final int MINE_ARRAY_START = 10;  // Same as HaulerMining.MINE_START_SLOT
+    public static final int MAX_SHARED_MINES = 8;   // Same as HaulerMining.MAX_KNOWN_MINES
 
     // Maximum distance squared to consider a mine for assignment
     public static final int MAX_ASSIGNMENT_DISTANCE_SQ = 900;  // ~30 tiles

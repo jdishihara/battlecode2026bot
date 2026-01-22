@@ -23,15 +23,10 @@ public final class Shared {
     public static final int ENEMY_RAT_Y_INDEX = 7;
     public static final int ENEMY_THREAT_LEVEL = 8;  // 0 = none, 1 = nearby, 2 = attacking
 
-    // ===== MINE TRACKING (used by KingConstants and DefenderMining) =====
-    // Slots 9-25 reserved for mine tracking (count + up to 8 mines * 2 coords)
-    // DO NOT use slots 9-25 for other purposes!
-
     // ===== ENEMY KING TRACKING =====
-    // Moved to slots 30-32 to avoid conflict with mine tracking (slots 9-25)
-    public static final int ENEMY_KING_X_INDEX = 30;
-    public static final int ENEMY_KING_Y_INDEX = 31;
-    public static final int ENEMY_KING_SEEN_ROUND_INDEX = 32;  // Round number (mod 1000)
+    public static final int ENEMY_KING_X_INDEX = 9;
+    public static final int ENEMY_KING_Y_INDEX = 10;
+    public static final int ENEMY_KING_SEEN_ROUND_INDEX = 11;  // Round number (mod 1000)
 
     // ===== SYMMETRY TRACKING (CLUSTERED SEARCH) =====
     public static final int CURRENT_SYMMETRY_INDEX = 12;       // 0=unknown, 1=rot, 2=horiz, 3=vert
@@ -56,10 +51,37 @@ public final class Shared {
     public static final int KING_ID_INDEX = 29;       // King's ID (mod 1000) for spawn order calculation
     public static final int NUM_INITIAL_ATTACKERS = 7; // First N baby rats are attackers, rest are haulers
 
+    // ===== SPAWN PHASE TRACKING =====
+    // Phase 0: Initial Hauler Phase - spawn 30 haulers first
+    // Phase 1: Initial Attacker Phase - spawn 30 attackers
+    // Phase 2: Main Hauler Phase - spawn haulers continuously, check attacker threshold
+    // Phase 3: Attacker Wave Phase - spawn 8 attackers, then back to Phase 2
+    public static final int SPAWN_PHASE_INDEX = 30;       // 0-3 for different phases
+    public static final int ENEMY_RAT_COUNT_INDEX = 31;   // Estimated enemy rat count from sightings
+    public static final int OUR_RAT_COUNT_INDEX = 32;     // Our baby rat count estimate
+    public static final int KING_RESERVE = 300;           // Cheese reserve for king safety
+
+    // Initial spawn counts
+    public static final int INITIAL_HAULER_COUNT = 30;    // Haulers to spawn first
+    public static final int INITIAL_ATTACKER_COUNT = 30;  // Attackers to spawn after haulers
+
+    // Attacker wave settings
+    public static final int ATTACKER_WAVE_SIZE = 8;       // Number of attackers to spawn per wave
+
+    // Shared array indices for tracking
+    public static final int ATTACKERS_SPAWNED_INDEX = 38; // Count of attackers spawned in current wave/phase
+    public static final int HAULERS_SPAWNED_INDEX = 39;   // Total haulers spawned
+
+    // ===== HAULER DEFENSE COORDINATION =====
+    // Focus fire system: king broadcasts priority target for all defenders to attack
+    public static final int DEFENSE_TARGET_X = 33;        // X coord of priority target (0 = none)
+    public static final int DEFENSE_TARGET_Y = 34;        // Y coord of priority target
+    public static final int DEFENSE_TARGET_HP = 35;       // HP of priority target (for updating)
+    public static final int DEFENSE_TARGET_ROUND = 36;    // Round when target was set (mod 1000)
+    public static final int DEFENSE_ENEMIES_COUNT = 37;   // Count of enemies near king (for spawn decisions)
+
     // ===== RESERVED FOR FUTURE USE =====
-    // Indices 33-63 available for expansion
-    // Note: 23-28 used by ALERT system in Constants.java
-    // Note: 30-32 used by ENEMY_KING tracking above
+    // Indices 38-63 available for expansion (23-28 used by ALERT system in Constants.java)
 
     // ===== SQUEAK MESSAGE ENCODING =====
     // Compact format: type (0-7, 3 bits) | x (0-63, 6 bits) | y (0-63, 6 bits)

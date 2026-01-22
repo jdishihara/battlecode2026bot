@@ -13,7 +13,8 @@
       "Bash(for map in DefaultSmall DefaultMedium)",
       "Bash(./gradlew compileJava:*)",
       "Bash(find:*)",
-      "Bash(./gradlew clean build:*)"
+      "Bash(./gradlew clean build:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

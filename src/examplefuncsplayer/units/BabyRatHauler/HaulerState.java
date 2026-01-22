@@ -11,27 +11,37 @@ public class HaulerState {
     public enum RatState { EXPLORE, COLLECT, RETURN, DELIVER, FLEE, DEFEND }
 
     // ===== THREAT LEVELS =====
-    public enum ThreatLevel { NONE, NEAR, BLOCKING, PANIC }
+    public enum ThreatLevel { NONE, NEAR, BLOCKING, PANIC, KING_DANGER }
 
     // ===== THREAT SOURCE TRACKING =====
     public static class ThreatInfo {
         public ThreatLevel level;
         public MapLocation source; // location of threat (cat or enemy rat)
-        public boolean shouldDefendKing; // true if we should attack enemies near king instead of fleeing
-        public MapLocation enemyToAttack; // specific enemy rat to attack when defending
+        public int enemiesNearKing;  // count of enemies near our king
+        public MapLocation priorityTarget;  // best target to attack (low HP)
+        public int priorityTargetHP;  // HP of priority target
 
         public ThreatInfo(ThreatLevel level, MapLocation source) {
             this.level = level;
             this.source = source;
-            this.shouldDefendKing = false;
-            this.enemyToAttack = null;
+            this.enemiesNearKing = 0;
+            this.priorityTarget = null;
+            this.priorityTargetHP = Integer.MAX_VALUE;
         }
+    }
 
-        public ThreatInfo(ThreatLevel level, MapLocation source, boolean shouldDefendKing, MapLocation enemyToAttack) {
-            this.level = level;
-            this.source = source;
-            this.shouldDefendKing = shouldDefendKing;
-            this.enemyToAttack = enemyToAttack;
+    // ===== DEFENSE TARGET INFO =====
+    public static class DefenseTarget {
+        public MapLocation location;
+        public int hp;
+        public int robotId;
+        public int distToKingSq;
+
+        public DefenseTarget(MapLocation loc, int hp, int id, int distToKingSq) {
+            this.location = loc;
+            this.hp = hp;
+            this.robotId = id;
+            this.distToKingSq = distToKingSq;
         }
     }
 }

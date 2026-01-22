@@ -49,9 +49,45 @@ public class TrapPlacement {
                 trapLoc = trapLoc.add(dir);
             }
             if (rc.canPlaceRatTrap(trapLoc)) {
+                rc.placeRatTrap(trapLoc);
                 return;
             }
         }
+    }
+
+    /**
+     * Place rat traps in the retreat path - between king and enemy.
+     * Called when escaping from enemy rats to slow their pursuit.
+     */
+    public static boolean placeTrapsInRetreatPath(RobotController rc, MapLocation threatLocation) throws GameActionException {
+        if (rc.getGlobalCheese() < 100) return false;
+
+        MapLocation kingLoc = rc.getLocation();
+        Direction toThreat = kingLoc.directionTo(threatLocation);
+
+        if (toThreat == Direction.CENTER) return false;
+
+        // Place traps toward the threat (in the path the enemy must cross)
+        Direction[] trapDirs = {
+                toThreat,
+                toThreat.rotateLeft(),
+                toThreat.rotateRight()
+        };
+
+        for (Direction dir : trapDirs) {
+            // Try placing at 1-2 tiles toward enemy
+            for (int dist = 1; dist <= 2; dist++) {
+                MapLocation trapLoc = kingLoc;
+                for (int i = 0; i < dist; i++) {
+                    trapLoc = trapLoc.add(dir);
+                }
+                if (rc.canPlaceRatTrap(trapLoc)) {
+                    rc.placeRatTrap(trapLoc);
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public static void tryPlaceCatTrapDuringEscape(RobotController rc, MapLocation catLocation,
