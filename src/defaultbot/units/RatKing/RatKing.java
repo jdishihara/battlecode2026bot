@@ -2,8 +2,8 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static defaultbot.config.Constants.*;
-import static defaultbot.config.Shared.*;
+import static examplefuncsplayer.config.Constants.*;
+import static examplefuncsplayer.config.Shared.*;
 
 /**
  * RatKing logic: spawns baby rats, broadcasts shared info, and evades cats.
@@ -64,18 +64,46 @@ public class RatKing {
             enemyRatDistSq = myLocation.distanceSquaredTo(enemyRatLocation);
         }
 
+        // ===== TRACK STATIONARY ROUNDS =====
+        if (KingRuntimeState.lastKingPosition != null && KingRuntimeState.lastKingPosition.equals(myLocation)) {
+            KingRuntimeState.stationaryRounds++;
+        } else {
+            KingRuntimeState.stationaryRounds = 0;
+        }
+        KingRuntimeState.lastKingPosition = myLocation;
+
         // ===== STATE TRANSITIONS =====
+        // More aggressive state transitions for better defense
+        final int ENEMY_RAT_ESCAPE_RADIUS_SQ = 64;  // 8 tiles - escape earlier from enemy rats
+        final int CAT_ALERT_RADIUS_SQ = ALERT_RADIUS * ALERT_RADIUS;
+        final int ENEMY_RAT_ALERT_RADIUS_SQ = 144;  // 12 tiles
+
         if (nearestCat == null && nearestEnemyRat == null) {
             KingRuntimeState.safeRoundsCounter++;
+
+            // Transition to ROAMING instead of SAFE after safe period
+            // ROAMING: Move every 3-5 rounds, never stationary > 5 rounds
             if (KingRuntimeState.safeRoundsCounter >= 5) {
-                KingRuntimeState.kingState = KingState.SAFE;
+                // Use ROAMING as the default "safe" state for mobile king
+                KingRuntimeState.kingState = KingState.ROAMING;
             }
         } else {
             KingRuntimeState.safeRoundsCounter = 0;
-            if (catDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS ||
-                    enemyRatDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS) {
+
+            // Escape conditions - more aggressive thresholds
+            boolean catTooClose = (catDistSq <= ESCAPE_RADIUS * ESCAPE_RADIUS);
+            boolean enemyRatTooClose = (enemyRatDistSq <= ENEMY_RAT_ESCAPE_RADIUS_SQ);
+
+            // Also escape if multiple enemy rats are nearby (swarming)
+            int nearbyEnemyCount = Sensing.countNearbyEnemyRats(rc, 100); // within 10 tiles
+            boolean enemySwarm = nearbyEnemyCount >= 3;
+
+            if (catTooClose || enemyRatTooClose || enemySwarm) {
                 KingRuntimeState.kingState = KingState.ESCAPE;
+            } else if (catDistSq <= CAT_ALERT_RADIUS_SQ || enemyRatDistSq <= ENEMY_RAT_ALERT_RADIUS_SQ) {
+                KingRuntimeState.kingState = KingState.ALERT;
             } else {
+                // Distant threats - stay alert but less urgent
                 KingRuntimeState.kingState = KingState.ALERT;
             }
         }
@@ -111,6 +139,9 @@ public class RatKing {
         switch (KingRuntimeState.kingState) {
             case SAFE:
                 StateBehaviors.runKingSafeState(rc, globalCheese, spawnCost, turnCount, enemyRatLocation);
+                break;
+            case ROAMING:
+                StateBehaviors.runKingRoamingState(rc, globalCheese, spawnCost, turnCount, roundNum);
                 break;
             case ALERT:
                 StateBehaviors.runKingAlertState(rc, globalCheese, spawnCost, enemyRatLocation, catLocation, catDistSq, roundNum);

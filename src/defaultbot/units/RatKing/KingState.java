@@ -5,6 +5,7 @@ package defaultbot.units.RatKing;
  */
 public enum KingState {
     SAFE,
+    ROAMING,
     ALERT,
     ESCAPE
 }

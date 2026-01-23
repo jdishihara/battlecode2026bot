@@ -49,10 +49,39 @@ public final class Shared {
 
     // ===== SPAWN ORDER TRACKING =====
     public static final int KING_ID_INDEX = 29;       // King's ID (mod 1000) for spawn order calculation
-    public static final int NUM_INITIAL_ATTACKERS = 6; // First N baby rats are attackers, rest are haulers
+    public static final int NUM_INITIAL_ATTACKERS = 7; // First N baby rats are attackers, rest are haulers
+
+    // ===== SPAWN PHASE TRACKING =====
+    // Phase 0: Initial Hauler Phase - spawn 30 haulers first
+    // Phase 1: Initial Attacker Phase - spawn 30 attackers
+    // Phase 2: Main Hauler Phase - spawn haulers continuously, check attacker threshold
+    // Phase 3: Attacker Wave Phase - spawn 8 attackers, then back to Phase 2
+    public static final int SPAWN_PHASE_INDEX = 30;       // 0-3 for different phases
+    public static final int ENEMY_RAT_COUNT_INDEX = 31;   // Estimated enemy rat count from sightings
+    public static final int OUR_RAT_COUNT_INDEX = 32;     // Our baby rat count estimate
+    public static final int KING_RESERVE = 300;           // Cheese reserve for king safety
+
+    // Initial spawn counts
+    public static final int INITIAL_HAULER_COUNT = 30;    // Haulers to spawn first
+    public static final int INITIAL_ATTACKER_COUNT = 30;  // Attackers to spawn after haulers
+
+    // Attacker wave settings
+    public static final int ATTACKER_WAVE_SIZE = 8;       // Number of attackers to spawn per wave
+
+    // Shared array indices for tracking
+    public static final int ATTACKERS_SPAWNED_INDEX = 38; // Count of attackers spawned in current wave/phase
+    public static final int HAULERS_SPAWNED_INDEX = 39;   // Total haulers spawned
+
+    // ===== HAULER DEFENSE COORDINATION =====
+    // Focus fire system: king broadcasts priority target for all defenders to attack
+    public static final int DEFENSE_TARGET_X = 33;        // X coord of priority target (0 = none)
+    public static final int DEFENSE_TARGET_Y = 34;        // Y coord of priority target
+    public static final int DEFENSE_TARGET_HP = 35;       // HP of priority target (for updating)
+    public static final int DEFENSE_TARGET_ROUND = 36;    // Round when target was set (mod 1000)
+    public static final int DEFENSE_ENEMIES_COUNT = 37;   // Count of enemies near king (for spawn decisions)
 
     // ===== RESERVED FOR FUTURE USE =====
-    // Indices 30-63 available for expansion (23-28 used by ALERT system in Constants.java)
+    // Indices 38-63 available for expansion (23-28 used by ALERT system in Constants.java)
 
     // ===== SQUEAK MESSAGE ENCODING =====
     // Compact format: type (0-7, 3 bits) | x (0-63, 6 bits) | y (0-63, 6 bits)

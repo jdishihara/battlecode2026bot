@@ -2,11 +2,11 @@ package defaultbot.units.BabyRatHauler;
 
 import battlecode.common.*;
 
-import defaultbot.units.BabyRatHauler.HaulerMemory.Mem;
-import defaultbot.units.BabyRatHauler.HaulerState.ThreatInfo;
-import defaultbot.units.BabyRatHauler.HaulerState.ThreatLevel;
+import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
+import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatInfo;
+import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatLevel;
 
-import static defaultbot.config.Constants.*;
+import static examplefuncsplayer.config.Constants.*;
 
 /**
  * Threat computation for hauler rats - handles cats and enemy rats.
@@ -65,8 +65,8 @@ public class HaulerThreat {
                 }
             }
 
-            // NEAR: cat within flee radius (only if actually within the radius)
-            if (catThreat == ThreatLevel.NONE && catDistSq <= CAT_FLEE_RADIUS * CAT_FLEE_RADIUS) {
+            // NEAR: cat within flee radius
+            if (catThreat == ThreatLevel.NONE) {
                 catThreat = ThreatLevel.NEAR;
             }
         }
@@ -80,7 +80,15 @@ public class HaulerThreat {
 
             // PANIC: enemy adjacent (can attack us)
             if (enemyDistSq <= 2) {
-                enemyThreat = ThreatLevel.PANIC;
+                // Only panic if enemy has HP advantage or is a rat king
+                int myHP = rc.getHealth();
+                int enemyHP = nearestEnemy.getHealth();
+                if (enemyHP >= myHP || nearestEnemy.getType() == UnitType.RAT_KING) {
+                    enemyThreat = ThreatLevel.PANIC;
+                } else {
+                    // We have HP advantage - treat as NEAR, not PANIC (stay and fight)
+                    enemyThreat = ThreatLevel.NEAR;
+                }
             }
             // NEAR: enemy within flee radius
             else {

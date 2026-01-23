@@ -5,7 +5,7 @@ import battlecode.common.MapLocation;
 
 import java.util.Random;
 
-import defaultbot.units.BabyRatHauler.HaulerState.RatState;
+import examplefuncsplayer.units.BabyRatHauler.HaulerState.RatState;
 
 /**
  * Per-robot memory for hauler rats.
@@ -76,12 +76,24 @@ public class HaulerMemory {
         public int turnsAtCurrentExploreTarget = 0;
         public int maxTurnsAtExploreTarget = 40;
 
+        // ===== DEFENSE STATE =====
+        public MapLocation currentDefenseTarget = null;  // Enemy we're focusing on
+        public int defenseTargetRound = -100;            // Round when we started targeting
+        public int lastDefenseTrapRound = -100;          // Round when we last placed a defense trap
+        public int defenseTrapCount = 0;                 // Traps this hauler has placed
+        public boolean isDefending = false;              // Whether we're actively in defense mode
+        public int lastDefenseSqueak = -100;             // Last round we squeaked for defense help
+
+        // ===== OFFENSIVE TRAP STATE =====
+        public int lastOffensiveTrapRound = -100;        // Round when we last placed an offensive trap
+        public int offensiveTrapCount = 0;               // Offensive traps this hauler has placed
+
         public final Random rng;
 
         public Mem(int id) {
             rng = new Random(6147L + id * 31L);
             followLeft = (id % 2 == 0); // Alternate wall follow direction
-            isScout = (id % 5 == 0);    // 20% are scouts
+            isScout = (id % 10 == 0);   // 10% are scouts - most should be hauling
         }
 
         // ===== MINE CACHING HELPERS =====

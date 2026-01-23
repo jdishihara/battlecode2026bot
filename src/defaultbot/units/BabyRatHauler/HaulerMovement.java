@@ -2,11 +2,11 @@ package defaultbot.units.BabyRatHauler;
 
 import battlecode.common.*;
 
-import defaultbot.units.BabyRatHauler.HaulerMemory.Mem;
-import defaultbot.units.BabyRatHauler.HaulerState.ThreatInfo;
-import defaultbot.units.BabyRatHauler.HaulerState.ThreatLevel;
+import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
+import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatInfo;
+import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatLevel;
 
-import static defaultbot.config.Constants.*;
+import static examplefuncsplayer.config.Constants.*;
 
 /**
  * Movement and digging functions for hauler rats.

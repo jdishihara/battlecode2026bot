@@ -2,19 +2,27 @@ package defaultbot;
 
 import battlecode.common.*;
 
-import defaultbot.units.RatKing.RatKing;
-import defaultbot.units.BabyRatAttacker.BabyRatAttacker;
-import defaultbot.units.BabyRatHauler.BabyRatHauler;
+import examplefuncsplayer.units.RatKing.RatKing;
+import examplefuncsplayer.units.BabyRatAttacker.BabyRatAttacker;
+import examplefuncsplayer.units.BabyRatHauler.BabyRatHauler;
 
-import static defaultbot.config.Shared.*;
+import static examplefuncsplayer.config.Shared.*;
 
 /**
  * Thin dispatcher: routes each unit to its role file.
  * All constants/state machines live in config/ + units/.
+ *
+ * Spawning Logic:
+ * - Phase 0: Initial Hauler Phase - spawn 30 haulers first
+ * - Phase 1: Initial Attacker Phase - spawn 30 attackers
+ * - Phase 2: Main Hauler Phase - spawn haulers continuously
+ * - Phase 3: Attacker Wave Phase - spawn 8 attackers, then back to Phase 2
  */
 public class RobotPlayer {
 
     static int turnCount = 0;
+    static boolean roleDecided = false;
+    static boolean isAttacker = false;
 
     @SuppressWarnings("unused")
     public static void run(RobotController rc) throws GameActionException {
@@ -29,23 +37,28 @@ public class RobotPlayer {
                 if (type == UnitType.RAT_KING) {
                     RatKing.run(rc, turnCount);
                 } else if (type == UnitType.BABY_RAT) {
-                    // Spawn attackers first, then haulers based on birth round
-                    // Birth round = the round this rat was spawned
-                    int birthRound = rc.getRoundNum() - turnCount + 1;
+                    // Decide role on first turn only (role is permanent)
+                    if (!roleDecided) {
+                        // Read spawn phase from shared array
+                        // Phase 0 = initial haulers, Phase 1 = initial attackers
+                        // Phase 2 = main haulers, Phase 3 = attacker wave
+                        int spawnPhase = rc.readSharedArray(SPAWN_PHASE_INDEX);
 
-                    // First ~36 rounds of spawned rats are attackers (roughly NUM_INITIAL_ATTACKERS worth)
-                    // This ensures attackers spawn before haulers
-                    int attackerRoundCutoff = NUM_INITIAL_ATTACKERS * 3;
-                    boolean isAttacker = (birthRound <= attackerRoundCutoff);
+                        // Attacker phases are 1 and 3; hauler phases are 0 and 2
+                        isAttacker = (spawnPhase == 1 || spawnPhase == 3);
+                        roleDecided = true;
+
+                        // Debug output
+                        String phaseNames[] = {"INIT_HAULER", "INIT_ATTACKER", "MAIN_HAULER", "ATCK_WAVE"};
+                        System.out.println("ID:" + rc.getID() +
+                                " phase:" + phaseNames[spawnPhase] +
+                                " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
+                    }
 
                     if (isAttacker) {
                         BabyRatAttacker.run(rc, turnCount);
                     } else {
                         BabyRatHauler.run(rc, turnCount);
-                    }
-                    // Debug: see role assignment values
-                    if (turnCount == 1) {
-                        System.out.println("ID:" + rc.getID() + " birthRound:" + birthRound + " cutoff:" + attackerRoundCutoff + " attacker:" + isAttacker);
                     }
                 } else {
                     // If Battlecode adds other unit types later, do nothing safely.

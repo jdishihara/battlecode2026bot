@@ -2,8 +2,8 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static defaultbot.config.Constants.*;
-import static defaultbot.config.Shared.*;
+import static examplefuncsplayer.config.Constants.*;
+import static examplefuncsplayer.config.Shared.*;
 
 /**
  * State-based behaviors for the Rat King.
@@ -36,10 +36,45 @@ public class StateBehaviors {
 
         if (turnCount <= 5 && globalCheese >= minCheeseForSpawn) {
             Movement.trySpawnRat(rc);
-        } else if (globalCheese > LOW_CHEESE_THRESHOLD &&
-                globalCheese >= minCheeseForSpawn &&
-                turnCount % SPAWN_INTERVAL == 0) {
+        } else if (globalCheese > LOW_CHEESE_THRESHOLD && globalCheese >= minCheeseForSpawn) {
+            // Use slower spawn interval for hauler phases (0, 2), normal for attacker phases (1, 3)
+            boolean isHaulerPhase = SpawnPhaseManager.isHaulerPhase(rc);
+            int interval = isHaulerPhase ? HAULER_SPAWN_INTERVAL : SPAWN_INTERVAL;
+            if (turnCount % interval == 0) {
+                Movement.trySpawnRat(rc);
+            }
+        }
+    }
+
+    /**
+     * Roaming state: King moves toward cheese-rich areas when safe.
+     */
+    public static void runKingRoamingState(RobotController rc, int globalCheese, int spawnCost,
+                                           int turnCount, int roundNum) throws GameActionException {
+        int minCheeseForSpawn = spawnCost + 100;
+
+        // Still spawn rats while roaming
+        int nearbyBabies = Sensing.countAlliedBabyRatsNearKing(rc, NEAR_KING_COUNT_RADIUS);
+        int desiredNearKingBabies = MIN_NEAR_KING_HAULERS + MIN_NEAR_KING_ATTACKERS;
+        boolean lowRats = nearbyBabies < Math.max(desiredNearKingBabies, MIN_DEFENDERS_NEAR_KING);
+
+        boolean enoughCheese = globalCheese >= minCheeseForSpawn && globalCheese >= CRITICAL_CHEESE_THRESHOLD;
+
+        if (lowRats && enoughCheese) {
             Movement.trySpawnRat(rc);
+        }
+
+        // Try to dig dirt to build reserves
+        if (turnCount % 5 == 0 && rc.getDirt() < 10) {
+            DirtWallDefense.tryDigDirt(rc);
+        }
+
+        // Move toward cheese-rich areas
+        if (rc.isMovementReady() && turnCount % 3 == 0) {
+            MapLocation roamTarget = Sensing.getRoamingTarget(rc);
+            if (roamTarget != null) {
+                Movement.tryRoamingMove(rc, roamTarget);
+            }
         }
     }
 
@@ -69,25 +104,56 @@ public class StateBehaviors {
 
     public static void runKingEscapeState(RobotController rc, MapLocation catLocation, int catDistSq,
                                    int roundNum, int globalCheese, MapLocation enemyRatLocation) throws GameActionException {
+        int enemyRatDistSq = enemyRatLocation != null ? rc.getLocation().distanceSquaredTo(enemyRatLocation) : Integer.MAX_VALUE;
+        boolean hasCatThreat = catLocation != null;
+        boolean hasRatThreat = enemyRatLocation != null;
+
+        // Determine primary threat (closest one)
+        MapLocation primaryThreat = null;
+        boolean primaryIsCat = false;
+
+        if (hasCatThreat && hasRatThreat) {
+            if (catDistSq <= enemyRatDistSq) {
+                primaryThreat = catLocation;
+                primaryIsCat = true;
+            } else {
+                primaryThreat = enemyRatLocation;
+            }
+        } else if (hasCatThreat) {
+            primaryThreat = catLocation;
+            primaryIsCat = true;
+        } else if (hasRatThreat) {
+            primaryThreat = enemyRatLocation;
+        }
+
+        if (primaryThreat == null) {
+            KingRuntimeState.kingState = KingState.ALERT;
+            return;
+        }
+
+        int primaryDistSq = primaryIsCat ? catDistSq : enemyRatDistSq;
         boolean canAttemptEscape = (roundNum - KingRuntimeState.lastEscapeRound >= ESCAPE_COOLDOWN) ||
-                (catDistSq <= PANIC_RADIUS * PANIC_RADIUS);
+                (primaryDistSq <= PANIC_RADIUS * PANIC_RADIUS);
 
-        if (canAttemptEscape && catLocation != null) {
-            // PRIORITY 1: Try to place dirt wall between us and cat
-            boolean placedDirtWall = DirtWallDefense.tryPlaceDirtWall(rc, catLocation, roundNum);
-
-            // PRIORITY 2: If no dirt available, fall back to cat trap
-            if (!placedDirtWall) {
-                TrapPlacement.tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+        if (canAttemptEscape) {
+            if (primaryIsCat) {
+                // Escaping from cat: dirt walls and cat traps
+                boolean placedDirtWall = DirtWallDefense.tryPlaceDirtWall(rc, catLocation, roundNum);
+                if (!placedDirtWall) {
+                    TrapPlacement.tryPlaceCatTrapDuringEscape(rc, catLocation, roundNum, globalCheese);
+                }
+            } else {
+                // Escaping from enemy rat: place rat traps in retreat path
+                TrapPlacement.placeTrapsInRetreatPath(rc, enemyRatLocation);
             }
 
-            // Place defensive rat traps if we have cheese
-            if (globalCheese >= 200) {
+            // Also place defensive rat traps if we have cheese and there are enemy rats
+            if (globalCheese >= 200 && enemyRatLocation != null) {
                 TrapPlacement.placeDefensiveTraps(rc, enemyRatLocation);
             }
 
-            // PRIORITY 3: Move away from cat
-            Movement.tryKingEscape(rc, catLocation);
+            // Move away from the primary threat
+            Movement.tryKingEscapeFromThreat(rc, primaryThreat);
             KingRuntimeState.lastEscapeRound = roundNum;
 
             KingRuntimeState.kingState = KingState.ALERT;

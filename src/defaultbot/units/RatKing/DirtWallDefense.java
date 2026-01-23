@@ -2,7 +2,7 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static defaultbot.config.Constants.*;
+import static examplefuncsplayer.config.Constants.*;
 
 /**
  * Dirt wall defense logic for the Rat King.

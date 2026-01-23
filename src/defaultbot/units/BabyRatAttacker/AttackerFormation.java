@@ -2,10 +2,12 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import defaultbot.units.BabyRatAttacker.AttackerMemory.Mem;
+import examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.Mem;
 
-import static defaultbot.units.BabyRatAttacker.AttackerState.*;
-import static defaultbot.units.BabyRatAttacker.AttackerMovement.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerMovement.*;
+
+import java.util.Arrays;
 
 /**
  * Formation movement and leader election for attacker rats.
@@ -288,5 +290,238 @@ public class AttackerFormation {
 
         // No ally found or couldn't move toward them - fall back to moving toward objective
         return attackerMoveToward(rc, m, objectiveLoc);
+    }
+
+    // ==================== TIGHT SWARM CLUSTERING ====================
+
+    /**
+     * Score a potential move location based on cluster cohesion.
+     * Higher score = better for maintaining tight formation.
+     *
+     * @param loc The location to score
+     * @param allyLocs Array of nearby ally locations
+     * @param objectiveLoc The target we're moving toward
+     * @return Score for this location (higher = better)
+     */
+    public static int scoreClusterPosition(MapLocation loc, MapLocation[] allyLocs, MapLocation objectiveLoc) {
+        int score = 0;
+
+        // Score based on ally proximity
+        for (MapLocation allyLoc : allyLocs) {
+            if (allyLoc == null) continue;
+            int distSq = loc.distanceSquaredTo(allyLoc);
+            if (distSq <= 2) {
+                // Adjacent ally (including diagonal) - highest bonus
+                score += CLUSTER_ADJACENCY_BONUS;
+            } else if (distSq <= CLUSTER_MAX_SPREAD_SQ) {
+                // Within ~2.8 tiles - moderate bonus
+                score += CLUSTER_NEAR_BONUS;
+            }
+        }
+
+        // Small bonus for moving toward objective (so we still make progress)
+        if (objectiveLoc != null) {
+            int distToObj = loc.distanceSquaredTo(objectiveLoc);
+            // Give up to 20 points for being closer to objective
+            score += Math.max(0, 20 - (distToObj / 10));
+        }
+
+        return score;
+    }
+
+    /**
+     * Count adjacent allies from pre-sensed ally list.
+     */
+    public static int countAdjacentAllies(MapLocation here, RobotInfo[] nearbyAllies) {
+        int count = 0;
+        for (RobotInfo ally : nearbyAllies) {
+            if (ally.getType() != UnitType.BABY_RAT) continue;
+            if (here.distanceSquaredTo(ally.getLocation()) <= 2) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Get the centroid (average position) of nearby allies.
+     */
+    public static MapLocation getAllyCentroid(MapLocation here, RobotInfo[] nearbyAllies) {
+        int sumX = here.x;
+        int sumY = here.y;
+        int count = 1;  // Include self
+
+        for (RobotInfo ally : nearbyAllies) {
+            if (ally.getType() != UnitType.BABY_RAT) continue;
+            sumX += ally.getLocation().x;
+            sumY += ally.getLocation().y;
+            count++;
+        }
+
+        return new MapLocation(sumX / count, sumY / count);
+    }
+
+    /**
+     * Cluster-aware movement toward objective.
+     * Prioritizes staying adjacent to allies while making progress toward target.
+     *
+     * @param rc RobotController
+     * @param m Memory state
+     * @param objectiveLoc Target location
+     * @param nearbyAllies Pre-sensed nearby allies
+     * @return true if movement was successful
+     */
+    public static boolean clusterMoveToward(RobotController rc, Mem m, MapLocation objectiveLoc,
+                                            RobotInfo[] nearbyAllies) throws GameActionException {
+        MapLocation here = rc.getLocation();
+
+        // Count current adjacent allies
+        int currentAdjacent = countAdjacentAllies(here, nearbyAllies);
+
+        // If we have few adjacent allies, prioritize regrouping
+        boolean shouldRegroup = currentAdjacent < CLUSTER_REGROUP_THRESHOLD;
+
+        // Get ally locations for scoring
+        MapLocation[] allyLocs = new MapLocation[nearbyAllies.length];
+        for (int i = 0; i < nearbyAllies.length; i++) {
+            if (nearbyAllies[i].getType() == UnitType.BABY_RAT) {
+                allyLocs[i] = nearbyAllies[i].getLocation();
+            }
+        }
+
+        // Score all possible move directions
+        Direction bestDir = null;
+        int bestScore = Integer.MIN_VALUE;
+
+        // Also track the best "advancing" direction (toward objective)
+        Direction advanceDir = here.directionTo(objectiveLoc);
+        if (advanceDir == Direction.CENTER) advanceDir = Direction.NORTH;
+
+        Direction[] allDirs = {
+            Direction.NORTH, Direction.NORTHEAST, Direction.EAST, Direction.SOUTHEAST,
+            Direction.SOUTH, Direction.SOUTHWEST, Direction.WEST, Direction.NORTHWEST
+        };
+
+        for (Direction dir : allDirs) {
+            MapLocation next = here.add(dir);
+
+            // Check if move is valid
+            if (!rc.canSenseLocation(next)) continue;
+            RobotInfo atNext = rc.senseRobotAtLocation(next);
+            if (atNext != null) continue;
+            MapInfo info = rc.senseMapInfo(next);
+            if (info.isWall()) continue;
+
+            // Anti-oscillation check
+            if ((m.prev1 != null && next.equals(m.prev1)) || (m.prev2 != null && next.equals(m.prev2))) {
+                continue;
+            }
+
+            // Score this position
+            int score = scoreClusterPosition(next, allyLocs, objectiveLoc);
+
+            // Bonus for moving in the advance direction (if not regrouping)
+            if (!shouldRegroup) {
+                if (dir == advanceDir) score += 15;
+                else if (dir == advanceDir.rotateLeft() || dir == advanceDir.rotateRight()) score += 10;
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestDir = dir;
+            }
+        }
+
+        // If no valid direction found, try standard movement
+        if (bestDir == null) {
+            return attackerMoveToward(rc, m, objectiveLoc);
+        }
+
+        // Execute the move
+        if (rc.getDirection() != bestDir && rc.canTurn(bestDir)) {
+            rc.turn(bestDir);
+        }
+
+        if (rc.canMove(bestDir)) {
+            rc.move(bestDir);
+            m.prev2 = m.prev1;
+            m.prev1 = here;
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Formation move that uses tight clustering.
+     * Leaders move toward objective, followers cluster around them.
+     */
+    public static boolean formationMoveCluster(RobotController rc, Mem m, MapLocation objectiveLoc,
+                                               int roundNum, RobotInfo[] nearbyAllies) throws GameActionException {
+        MapLocation here = rc.getLocation();
+
+        // Decrement stuck cooldown each turn
+        if (m.stuckCooldown > 0) {
+            m.stuckCooldown--;
+        }
+
+        // Count adjacent allies
+        int adjacentAllies = countAdjacentAllies(here, nearbyAllies);
+
+        // === LEADER BEHAVIOR ===
+        if (amILeader(rc, m, objectiveLoc, nearbyAllies)) {
+            m.isLeader = true;
+
+            // Leaders use cluster movement - advances but stays with group
+            boolean moved = clusterMoveToward(rc, m, objectiveLoc, nearbyAllies);
+
+            // Track stuck status
+            if (moved) {
+                m.leaderStuckCount = 0;
+            } else {
+                m.leaderStuckCount++;
+                if (m.leaderStuckCount >= LEADER_STUCK_THRESHOLD) {
+                    m.stuckCooldown = LEADER_COOLDOWN_ROUNDS;
+                    m.leaderStuckCount = 0;
+                }
+            }
+
+            // Squeak formation message
+            int seq = roundNum % FORMATION_SEQ_MODULO;
+            Direction dirToSqueak = moved ? rc.getDirection() : here.directionTo(objectiveLoc);
+            if (dirToSqueak == Direction.CENTER) dirToSqueak = Direction.NORTH;
+            int formationMsg = encodeFormation(seq, dirToSqueak);
+            rc.squeak(formationMsg);
+
+            return moved;
+        }
+
+        // === FOLLOWER BEHAVIOR: Cluster around nearest ally or leader ===
+        m.isLeader = false;
+        m.leaderStuckCount = 0;
+
+        // If we have few adjacent allies, prioritize getting adjacent to someone
+        if (adjacentAllies < CLUSTER_REGROUP_THRESHOLD) {
+            // Find nearest ally and move adjacent to them
+            RobotInfo nearestAlly = null;
+            int nearestDist = Integer.MAX_VALUE;
+
+            for (RobotInfo ally : nearbyAllies) {
+                if (ally.getType() != UnitType.BABY_RAT) continue;
+                int dist = here.distanceSquaredTo(ally.getLocation());
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearestAlly = ally;
+                }
+            }
+
+            if (nearestAlly != null) {
+                // Move to get adjacent to nearest ally
+                return moveAdjacentToSource(rc, m, nearestAlly.getLocation(), objectiveLoc, roundNum);
+            }
+        }
+
+        // Otherwise, use cluster movement toward objective
+        return clusterMoveToward(rc, m, objectiveLoc, nearbyAllies);
     }
 }

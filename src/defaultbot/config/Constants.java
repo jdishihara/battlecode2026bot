@@ -8,11 +8,11 @@ public final class Constants {
     public static final boolean DEBUG = false;
 
     // ===== GENERAL GAMEPLAY =====
-    public static final int INITIAL_RATS = 5;
+    public static final int INITIAL_RATS = 10;
     public static final int CARRY_LIMIT = 20;
     public static final int LOW_CHEESE_THRESHOLD = 1500;
     public static final int CRITICAL_CHEESE_THRESHOLD = 300;
-    public static final int CAT_FLEE_RADIUS = 7;
+    public static final int CAT_FLEE_RADIUS = 12;
     public static final int DELIVERY_RADIUS = 1;
     public static final int SPAWN_INTERVAL = 6;
     public static final int MAX_TARGET_PURSUIT_TURNS = 30;
@@ -20,13 +20,13 @@ public final class Constants {
     public static final int MIN_NEAR_KING_HAULERS = 6;
     public static final int MIN_NEAR_KING_ATTACKERS = 6;
     public static final int NEAR_KING_COUNT_RADIUS = 25;
-    public static final int ENEMY_FLEE_RADIUS = 5;
+    public static final int ENEMY_FLEE_RADIUS = 12;
 
     // ===== RAT KING =====
-    public static final int ALERT_RADIUS = 18;
-    public static final int ESCAPE_RADIUS = 10;
-    public static final int PANIC_RADIUS = 6;
-    public static final int ESCAPE_COOLDOWN = 12;
+    public static final int ALERT_RADIUS = 20;
+    public static final int ESCAPE_RADIUS = 20;
+    public static final int PANIC_RADIUS = 10;
+    public static final int ESCAPE_COOLDOWN = 1;
 
     // ===== ATTACKER =====
     public static final int ATTACKER_CAT_FLEE_RADIUS = 6;
@@ -39,12 +39,32 @@ public final class Constants {
     public static final int DEFENSIVE_TRAP_RADIUS = 2;
     public static final int KING_ATTACK_CHEESE_BOOST = 50;
 
+    // ===== HAULER DEFENSE SYSTEM =====
+    public static final int HAULER_DEFEND_RADIUS = 36;          // dist² to king to trigger defense mode (~6 tiles)
+    public static final int HAULER_DEFEND_RADIUS_SQ = 64;       // 8 tiles - haulers defend within this range of king
+    public static final int HAULER_DEFEND_ENGAGE_RADIUS = 25;   // dist² to engage enemies (~5 tiles)
+    public static final int KING_THREAT_RADIUS = 64;            // dist² from king to consider enemy a threat (~8 tiles)
+    public static final int HAULER_DEFENSE_BITE_BOOST = 20;     // Cheese to spend on defensive bites
+    public static final int HAULER_TRAP_COOLDOWN = 15;          // Rounds between trap placements
+    public static final int HAULER_MAX_DEFENSE_TRAPS = 8;       // Max traps a single hauler will place
+    public static final int HAULER_FOCUS_FIRE_ROUNDS = 20;      // How long to keep focusing same target
+    public static final int LOW_HP_THRESHOLD = 40;              // HP below which target is "low HP" priority
+    public static final int HAULER_ATTACK_CHEESE_BOOST = 25;    // Cheese to spend on attacks when defending
+    public static final int MIN_ALLIES_FOR_DEFENSE = 2;         // Minimum allies needed to engage enemies
+    public static final int OFFENSIVE_TRAP_CHEESE_THRESHOLD = 50; // Min cheese reserve for offensive traps
+    public static final int HAULER_SPAWN_INTERVAL = 14;         // Slower spawn rate for ongoing hauler spawns
+
+    // King mobility constants
+    public static final int KING_KITE_SAFE_DIST_SQ = 144;      // 12 tiles - maintain this distance from threats
+    public static final int KING_ENEMY_ESCAPE_RADIUS_SQ = 64;  // 8 tiles - escape when enemy rats this close
+    public static final int KING_SWARM_THRESHOLD = 3;          // Escape if this many enemies nearby
+
     // ===== COMBAT & SWARMING =====
     public static final int SQUEAK_COOLDOWN = 8;              // Rounds between squeaks (avoid cat attention)
     public static final int SQUEAK_LISTEN_ROUNDS = 5;         // How far back to read messages
-    public static final int SWARM_RESPONSE_DISTANCE_SQ = 400; // Respond to squeaks within 20 units
+    public static final int SWARM_RESPONSE_DISTANCE_SQ = 999; // Respond to squeaks within 20 units
     public static final int TRAP_CHEESE_THRESHOLD = 200;      // Min cheese to place offensive traps
-    public static final int OFFENSIVE_TRAP_COOLDOWN = 15;     // Rounds between offensive trap placements
+    public static final int OFFENSIVE_TRAP_COOLDOWN = 1;     // Rounds between offensive trap placements
     public static final int MAX_TEAM_RAT_TRAPS = 25;          // From spec - max rat traps per team
     public static final int RAT_TRAP_COST = 30;               // From spec
     public static final int RAT_TRAP_DAMAGE = 50;             // From spec

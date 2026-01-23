@@ -16,6 +16,10 @@ public class KingRuntimeState {
     public static MapLocation lastKnownEnemyKingLoc = null;
     public static int lastEnemyKingSeenRound = -999;
 
+    // === King position tracking ===
+    public static MapLocation lastKingPosition = null;
+    public static int stationaryRounds = 0;
+
     // === Symmetry management ===
     public static boolean symmetryInitialized = false;
 

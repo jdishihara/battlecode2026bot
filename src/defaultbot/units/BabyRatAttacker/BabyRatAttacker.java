@@ -2,16 +2,16 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import defaultbot.units.BabyRatAttacker.AttackerMemory.Mem;
-import defaultbot.units.BabyRatAttacker.AttackerState.AttackStateEnum;
+import examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.Mem;
+import examplefuncsplayer.units.BabyRatAttacker.AttackerState.AttackStateEnum;
 
-import static defaultbot.config.Constants.*;
-import static defaultbot.config.Shared.*;
-import static defaultbot.units.BabyRatAttacker.AttackerState.*;
-import static defaultbot.units.BabyRatAttacker.AttackerMemory.mem;
-import static defaultbot.units.BabyRatAttacker.AttackerMovement.*;
-import static defaultbot.units.BabyRatAttacker.AttackerCommunication.*;
-import static defaultbot.units.BabyRatAttacker.AttackerFormation.*;
+import static examplefuncsplayer.config.Constants.*;
+import static examplefuncsplayer.config.Shared.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.mem;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerMovement.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerCommunication.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerFormation.*;
 
 /**
  * ATTACKER baby rat: CLUSTERED SYMMETRY SEARCH
@@ -545,10 +545,10 @@ public class BabyRatAttacker {
             return;
         }
 
-        // If we already know enemy king location, go there
+        // If we already know enemy king location, go there as a tight cluster
         if (m.targetKingLoc != null) {
             m.currentTarget = m.targetKingLoc;
-            formationMoveSeek(rc, m, m.targetKingLoc, roundNum, nearbyAllies);
+            formationMoveCluster(rc, m, m.targetKingLoc, roundNum, nearbyAllies);
             return;
         }
 
@@ -565,22 +565,8 @@ public class BabyRatAttacker {
 
         int distToTarget = here.distanceSquaredTo(symmetryTarget);
 
-        // Only spread out when FAR from target (> 10 tiles away)
-        // When close, converge on the exact location to properly check corners
-        MapLocation moveTarget;
-        if (distToTarget > 100) {
-            // Far away - add slight spread to avoid traffic jams
-            int spreadX = (rc.getID() % 5) - 2;  // -2 to +2 (smaller spread)
-            int spreadY = ((rc.getID() / 5) % 5) - 2;
-            moveTarget = new MapLocation(
-                Math.max(2, Math.min(rc.getMapWidth() - 3, symmetryTarget.x + spreadX)),
-                Math.max(2, Math.min(rc.getMapHeight() - 3, symmetryTarget.y + spreadY))
-            );
-        } else {
-            // Close to target - go directly to the predicted location
-            // This ensures rats actually reach corners
-            moveTarget = symmetryTarget;
-        }
+        // No spread - all attackers converge on the same target as a tight group
+        MapLocation moveTarget = symmetryTarget;
 
         m.currentTarget = moveTarget;
 
@@ -592,8 +578,8 @@ public class BabyRatAttacker {
         // Debug: show which symmetry we're actually heading to
         rc.setIndicatorLine(here, symmetryTarget, 255, 255, 0); // Yellow line to target
 
-        // Use formation movement instead of direct movement
-        formationMoveSeek(rc, m, moveTarget, roundNum, nearbyAllies);
+        // Use tight cluster movement - stay adjacent to allies while advancing
+        formationMoveCluster(rc, m, moveTarget, roundNum, nearbyAllies);
     }
 
     static void runAttack(RobotController rc, Mem m, int roundNum) throws GameActionException {
@@ -644,9 +630,10 @@ public class BabyRatAttacker {
             }
         }
 
-        // === MOVE TOWARD TARGET ===
+        // === MOVE TOWARD TARGET AS TIGHT CLUSTER ===
         m.currentTarget = m.targetKingLoc;
-        attackerMoveToward(rc, m, m.targetKingLoc);
+        RobotInfo[] nearbyAllies = rc.senseNearbyRobots(CLUSTER_SENSE_RADIUS_SQ, rc.getTeam());
+        formationMoveCluster(rc, m, m.targetKingLoc, roundNum, nearbyAllies);
     }
 
     static void runGuard(RobotController rc, Mem m, int roundNum) throws GameActionException {

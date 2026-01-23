@@ -2,9 +2,9 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import defaultbot.units.BabyRatAttacker.AttackerMemory.Mem;
+import examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.Mem;
 
-import static defaultbot.units.BabyRatAttacker.AttackerState.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
 
 /**
  * Movement and flee functions for attacker rats.

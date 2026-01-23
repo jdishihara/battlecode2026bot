@@ -2,8 +2,8 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static defaultbot.config.Constants.*;
-import static defaultbot.config.Shared.*;
+import static examplefuncsplayer.config.Constants.*;
+import static examplefuncsplayer.config.Shared.*;
 
 /**
  * Enemy king detection and broadcasting for the Rat King.
