@@ -609,15 +609,47 @@ public class BabyRatAttacker {
             }
         }
 
-        // === ALSO ATTACK ENEMY BABY RATS ===
+        // === FOCUS FIRE: Check for king-designated target first ===
+        MapLocation focusTarget = getFocusTarget(rc);
+        if (focusTarget != null && here.distanceSquaredTo(focusTarget) <= 2) {
+            // Focus target is adjacent - attack it with priority
+            int focusSpend = shouldGangUp ?
+                Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
+                Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
+            if (rc.canAttack(focusTarget, focusSpend)) {
+                rc.attack(focusTarget, focusSpend);
+                return;
+            }
+        }
+
+        // === ALSO ATTACK ENEMY BABY RATS (prefer focus target if in range) ===
         RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
+
+        // Sort enemies by focus target match, then by HP (lowest first)
+        RobotInfo bestEnemy = null;
+        int bestScore = Integer.MAX_VALUE;
         for (RobotInfo enemy : enemies) {
             if (enemy.getType() == UnitType.BABY_RAT) {
-                int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-                if (rc.canAttack(enemy.getLocation(), spend)) {
-                    rc.attack(enemy.getLocation(), spend);
-                    return;
+                MapLocation enemyLoc = enemy.getLocation();
+                // Score: focus target gets -1000, then add HP
+                int score = enemy.getHealth();
+                if (focusTarget != null && enemyLoc.equals(focusTarget)) {
+                    score -= 1000; // Massive priority boost for focus target
                 }
+                if (score < bestScore && here.distanceSquaredTo(enemyLoc) <= 2) {
+                    bestScore = score;
+                    bestEnemy = enemy;
+                }
+            }
+        }
+
+        if (bestEnemy != null) {
+            int spend = shouldGangUp ?
+                Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
+                Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
+            if (rc.canAttack(bestEnemy.getLocation(), spend)) {
+                rc.attack(bestEnemy.getLocation(), spend);
+                return;
             }
         }
 
@@ -630,38 +662,54 @@ public class BabyRatAttacker {
             }
         }
 
-        // === MOVE TOWARD TARGET AS TIGHT CLUSTER ===
-        m.currentTarget = m.targetKingLoc;
+        // === MOVE TOWARD FOCUS TARGET OR KING AS TIGHT CLUSTER ===
+        MapLocation moveTarget = (focusTarget != null && here.distanceSquaredTo(focusTarget) > 2)
+            ? focusTarget : m.targetKingLoc;
+        m.currentTarget = moveTarget;
         RobotInfo[] nearbyAllies = rc.senseNearbyRobots(CLUSTER_SENSE_RADIUS_SQ, rc.getTeam());
-        formationMoveCluster(rc, m, m.targetKingLoc, roundNum, nearbyAllies);
+        formationMoveCluster(rc, m, moveTarget, roundNum, nearbyAllies);
     }
 
     static void runGuard(RobotController rc, Mem m, int roundNum) throws GameActionException {
         MapLocation here = rc.getLocation();
 
+        // === CHECK FOCUS FIRE TARGET FIRST ===
+        MapLocation focusTarget = getFocusTarget(rc);
+
         // Find and attack nearby enemy rats
         RobotInfo[] enemies = rc.senseNearbyRobots(20, rc.getTeam().opponent());
-        RobotInfo closestEnemy = null;
-        int closestDist = Integer.MAX_VALUE;
+        RobotInfo bestEnemy = null;
+        int bestScore = Integer.MAX_VALUE;
 
         for (RobotInfo enemy : enemies) {
             if (enemy.getType() == UnitType.BABY_RAT) {
-                int dist = here.distanceSquaredTo(enemy.getLocation());
-                if (dist < closestDist) {
-                    closestDist = dist;
-                    closestEnemy = enemy;
+                MapLocation enemyLoc = enemy.getLocation();
+                int dist = here.distanceSquaredTo(enemyLoc);
+                // Score: focus target gets -1000, then add distance
+                int score = dist;
+                if (focusTarget != null && enemyLoc.equals(focusTarget)) {
+                    score -= 1000; // Massive priority boost for focus target
+                }
+                // Also prefer low HP targets
+                score += enemy.getHealth();
+
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestEnemy = enemy;
                 }
             }
         }
 
-        if (closestEnemy != null) {
+        if (bestEnemy != null) {
+            MapLocation enemyLoc = bestEnemy.getLocation();
+
             // Place defensive trap
             if (m.kingLocation != null &&
                 rc.getGlobalCheese() >= RAT_TRAP_COST + 50 &&
                 roundNum - m.lastTrapRound >= 10) {
 
-                Direction toKing = closestEnemy.getLocation().directionTo(m.kingLocation);
-                MapLocation trapLoc = closestEnemy.getLocation().add(toKing);
+                Direction toKing = enemyLoc.directionTo(m.kingLocation);
+                MapLocation trapLoc = enemyLoc.add(toKing);
 
                 if (here.isAdjacentTo(trapLoc) && rc.canPlaceRatTrap(trapLoc)) {
                     rc.placeRatTrap(trapLoc);
@@ -669,15 +717,19 @@ public class BabyRatAttacker {
                 }
             }
 
-            // Attack the enemy
-            int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-            if (rc.canAttack(closestEnemy.getLocation(), spend)) {
-                rc.attack(closestEnemy.getLocation(), spend);
+            // Attack the enemy - spend more on focus target
+            boolean isFocusTarget = focusTarget != null && enemyLoc.equals(focusTarget);
+            int spend = isFocusTarget ?
+                Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
+                Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
+
+            if (rc.canAttack(enemyLoc, spend)) {
+                rc.attack(enemyLoc, spend);
                 return;
             }
 
-            m.currentTarget = closestEnemy.getLocation();
-            attackerMoveToward(rc, m, closestEnemy.getLocation());
+            m.currentTarget = enemyLoc;
+            attackerMoveToward(rc, m, enemyLoc);
             return;
         }
 

@@ -1,5 +1,7 @@
 package examplefuncsplayer.config;
 
+import battlecode.common.*;
+
 /**
  * Shared array indices (team-shared memory slots).
  * The shared array has 64 slots, each holding values 0-1023.
@@ -80,8 +82,97 @@ public final class Shared {
     public static final int DEFENSE_TARGET_ROUND = 36;    // Round when target was set (mod 1000)
     public static final int DEFENSE_ENEMIES_COUNT = 37;   // Count of enemies near king (for spawn decisions)
 
+    // ===== FOCUS FIRE SYSTEM =====
+    // Global target coordination - all rats attack the same enemy
+    public static final int FOCUS_TARGET_X = 40;
+    public static final int FOCUS_TARGET_Y = 41;
+    public static final int FOCUS_TARGET_ROUND = 42;
+    public static final int FOCUS_TARGET_PRIORITY = 43; // encoded: [hp:7][distance_to_king:3]
+    public static final int FOCUS_TARGET_STALE_THRESHOLD = 3; // rounds before target is considered stale
+
+    /**
+     * Calculate target priority for focus fire.
+     * Lower value = higher priority (more urgent to kill).
+     * Encodes: [hp in upper bits][distance to king in lower 3 bits]
+     *
+     * @param enemyHP Enemy's current health (0-100+)
+     * @param distToOurKingSq Squared distance from enemy to our king
+     * @return Priority value (lower = more urgent)
+     */
+    public static int calcTargetPriority(int enemyHP, int distToOurKingSq) {
+        // Convert distSq to a 0-7 scale (closer = lower = better)
+        int distBucket = Math.min(7, (int) Math.sqrt(distToOurKingSq) / 2);
+        // HP in upper bits, distance in lower 3 bits
+        return (enemyHP << 3) | distBucket;
+    }
+
+    /**
+     * Get the current focus fire target from shared array.
+     * Returns null if no target or target is stale.
+     *
+     * @param rc RobotController
+     * @return Focus target location, or null if none/stale
+     */
+    public static MapLocation getFocusTarget(RobotController rc) throws GameActionException {
+        int targetRound = rc.readSharedArray(FOCUS_TARGET_ROUND);
+        int currentRound = rc.getRoundNum();
+
+        // Check if target is stale (accounting for round wraparound at 1000)
+        int roundDiff = (currentRound - targetRound + 1000) % 1000;
+        if (roundDiff > FOCUS_TARGET_STALE_THRESHOLD) return null;
+
+        int x = rc.readSharedArray(FOCUS_TARGET_X);
+        int y = rc.readSharedArray(FOCUS_TARGET_Y);
+
+        // 0,0 means no target (since we use +1 encoding could also work, but 0,0 is fine)
+        if (x == 0 && y == 0) return null;
+
+        return new MapLocation(x, y);
+    }
+
+    /**
+     * Update the focus fire target. Only Rat King should call this.
+     * Updates if: no current target, better priority, or target is stale.
+     *
+     * @param rc RobotController
+     * @param enemy Enemy robot to potentially target
+     * @param kingLoc Our king's location (for priority calculation)
+     */
+    public static void updateFocusTarget(RobotController rc, RobotInfo enemy, MapLocation kingLoc)
+            throws GameActionException {
+        if (rc.getType() != UnitType.RAT_KING) return; // Only king writes
+
+        int currentRound = rc.getRoundNum();
+        int newPriority = calcTargetPriority(enemy.getHealth(), enemy.getLocation().distanceSquaredTo(kingLoc));
+
+        int currentPriority = rc.readSharedArray(FOCUS_TARGET_PRIORITY);
+        int currentRound_stored = rc.readSharedArray(FOCUS_TARGET_ROUND);
+
+        // Calculate round difference (handle wraparound)
+        int roundDiff = (currentRound - currentRound_stored + 1000) % 1000;
+
+        // Update if: target is stale OR new target has better (lower) priority
+        if (roundDiff > FOCUS_TARGET_STALE_THRESHOLD || newPriority < currentPriority) {
+            rc.writeSharedArray(FOCUS_TARGET_X, enemy.getLocation().x);
+            rc.writeSharedArray(FOCUS_TARGET_Y, enemy.getLocation().y);
+            rc.writeSharedArray(FOCUS_TARGET_ROUND, currentRound % 1000);
+            rc.writeSharedArray(FOCUS_TARGET_PRIORITY, newPriority);
+        }
+    }
+
+    /**
+     * Clear the focus fire target. Call when target is killed or lost.
+     * Only Rat King should call this.
+     */
+    public static void clearFocusTarget(RobotController rc) throws GameActionException {
+        if (rc.getType() != UnitType.RAT_KING) return;
+        rc.writeSharedArray(FOCUS_TARGET_X, 0);
+        rc.writeSharedArray(FOCUS_TARGET_Y, 0);
+        rc.writeSharedArray(FOCUS_TARGET_PRIORITY, 1023); // Max value = lowest priority
+    }
+
     // ===== RESERVED FOR FUTURE USE =====
-    // Indices 38-63 available for expansion (23-28 used by ALERT system in Constants.java)
+    // Indices 44-63 available for expansion (23-28 used by ALERT system in Constants.java)
 
     // ===== SQUEAK MESSAGE ENCODING =====
     // Compact format: type (0-7, 3 bits) | x (0-63, 6 bits) | y (0-63, 6 bits)

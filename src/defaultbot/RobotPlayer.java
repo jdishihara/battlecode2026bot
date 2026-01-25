@@ -12,11 +12,9 @@ import static examplefuncsplayer.config.Shared.*;
  * Thin dispatcher: routes each unit to its role file.
  * All constants/state machines live in config/ + units/.
  *
- * Spawning Logic:
- * - Phase 0: Initial Hauler Phase - spawn 30 haulers first
- * - Phase 1: Initial Attacker Phase - spawn 30 attackers
- * - Phase 2: Main Hauler Phase - spawn haulers continuously
- * - Phase 3: Attacker Wave Phase - spawn 8 attackers, then back to Phase 2
+ * Spawning Logic: 50/50 SPLIT
+ * - 50% of spawned BabyRats become BabyRatAttackers (attack enemy king)
+ * - 50% of spawned BabyRats become BabyRatHaulers (gather cheese)
  */
 public class RobotPlayer {
 
@@ -39,20 +37,11 @@ public class RobotPlayer {
                 } else if (type == UnitType.BABY_RAT) {
                     // Decide role on first turn only (role is permanent)
                     if (!roleDecided) {
-                        // Read spawn phase from shared array
-                        // Phase 0 = initial haulers, Phase 1 = initial attackers
-                        // Phase 2 = main haulers, Phase 3 = attacker wave
-                        int spawnPhase = rc.readSharedArray(SPAWN_PHASE_INDEX);
-
-                        // Attacker phases are 1 and 3; hauler phases are 0 and 2
-                        isAttacker = (spawnPhase == 1 || spawnPhase == 3);
+                        // 50/50 split: even IDs are attackers, odd IDs are haulers
+                        isAttacker = (rc.getID() % 2 == 0);
                         roleDecided = true;
 
-                        // Debug output
-                        String phaseNames[] = {"INIT_HAULER", "INIT_ATTACKER", "MAIN_HAULER", "ATCK_WAVE"};
-                        System.out.println("ID:" + rc.getID() +
-                                " phase:" + phaseNames[spawnPhase] +
-                                " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
+                        System.out.println("ID:" + rc.getID() + " role:" + (isAttacker ? "ATTACKER" : "HAULER") + " (50/50 split)");
                     }
 
                     if (isAttacker) {
