@@ -44,7 +44,6 @@ public class HaulerDefense {
     /**
      * Enhanced threat computation that tracks enemies near king.
      * Call this instead of the basic computeThreat when defense is important.
-     * Now integrates with Focus Fire system for coordinated attacks.
      */
     public static ThreatInfo computeDefenseThreat(RobotController rc, Mem m) throws GameActionException {
         MapLocation here = rc.getLocation();
@@ -61,9 +60,18 @@ public class HaulerDefense {
         // Track enemies near king for defense
         int enemiesNearKing = 0;
         DefenseTarget bestTarget = null;
+        MapLocation sharedTargetLoc = null;
 
-        // === FOCUS FIRE: Get king-designated target ===
-        MapLocation focusTarget = getFocusTarget(rc);
+        // Read shared defense target if available
+        int sharedTargetX = rc.readSharedArray(DEFENSE_TARGET_X);
+        int sharedTargetY = rc.readSharedArray(DEFENSE_TARGET_Y);
+        int sharedTargetRound = rc.readSharedArray(DEFENSE_TARGET_ROUND);
+        int currentRound = rc.getRoundNum();
+
+        // Check if shared target is still fresh (within 20 rounds)
+        if (sharedTargetX != 0 && (currentRound - sharedTargetRound + 1000) % 1000 < HAULER_FOCUS_FIRE_ROUNDS) {
+            sharedTargetLoc = new MapLocation(sharedTargetX, sharedTargetY);
+        }
 
         for (RobotInfo r : nearbyRobots) {
             MapLocation loc = r.getLocation();
@@ -84,14 +92,12 @@ public class HaulerDefense {
                         // Evaluate as potential target
                         DefenseTarget candidate = new DefenseTarget(loc, r.getHealth(), r.getID(), distToKingSq);
 
-                        // === FOCUS FIRE PRIORITY ===
-                        // If this is the focus target, it gets highest priority
-                        if (focusTarget != null && loc.equals(focusTarget)) {
+                        // If this is the shared target, prioritize it
+                        if (sharedTargetLoc != null && loc.equals(sharedTargetLoc)) {
                             bestTarget = candidate;
                         } else if (bestTarget == null) {
                             bestTarget = candidate;
-                        } else if (focusTarget == null || !bestTarget.location.equals(focusTarget)) {
-                            // Only compare if we don't already have the focus target
+                        } else {
                             // Priority: 1) Low HP, 2) Closer to king
                             boolean isBetter = false;
 
@@ -108,7 +114,7 @@ public class HaulerDefense {
                                 isBetter = true;
                             }
 
-                            if (isBetter) {
+                            if (isBetter && sharedTargetLoc == null) {
                                 bestTarget = candidate;
                             }
                         }
@@ -148,8 +154,6 @@ public class HaulerDefense {
             threat.priorityTarget = bestTarget.location;
             threat.priorityTargetHP = bestTarget.hp;
         }
-        // Store focus target in threat info for downstream use
-        threat.focusTarget = focusTarget;
 
         return threat;
     }
@@ -157,23 +161,12 @@ public class HaulerDefense {
     /**
      * Select the best target to attack.
      * Priority:
-     * 1. Focus fire target (king-designated, highest priority)
+     * 1. Shared focus fire target (if still valid)
      * 2. Low HP enemies (can kill quickly)
      * 3. Enemies closest to king
      * 4. Adjacent enemies we can hit right now
      */
     public static MapLocation selectDefenseTarget(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
-        // === FOCUS FIRE: King-designated target has highest priority ===
-        if (threat.focusTarget != null) {
-            MapLocation here = rc.getLocation();
-            // Check if focus target is nearby and we can engage
-            if (here.distanceSquaredTo(threat.focusTarget) <= HAULER_DEFEND_RADIUS) {
-                m.currentDefenseTarget = threat.focusTarget;
-                m.defenseTargetRound = rc.getRoundNum();
-                return threat.focusTarget;
-            }
-        }
-
         // If threat already computed a priority target, use it
         if (threat.priorityTarget != null) {
             m.currentDefenseTarget = threat.priorityTarget;
@@ -191,15 +184,9 @@ public class HaulerDefense {
 
         for (RobotInfo enemy : adjacent) {
             if (enemy.getType() == UnitType.BABY_RAT || enemy.getType() == UnitType.RAT_KING) {
-                MapLocation enemyLoc = enemy.getLocation();
-                int score = enemy.getHealth();
-                // Focus target gets massive priority boost
-                if (threat.focusTarget != null && enemyLoc.equals(threat.focusTarget)) {
-                    score -= 1000;
-                }
-                if (score < bestHP) {
-                    bestHP = score;
-                    bestLoc = enemyLoc;
+                if (enemy.getHealth() < bestHP) {
+                    bestHP = enemy.getHealth();
+                    bestLoc = enemy.getLocation();
                 }
             }
         }
@@ -215,13 +202,8 @@ public class HaulerDefense {
     /**
      * Attack the target with appropriate cheese boost.
      * Returns true if attack was successful.
-     *
-     * @param rc RobotController
-     * @param m Hauler memory
-     * @param target Location to attack
-     * @param isFocusTarget Whether this is the king-designated focus fire target
      */
-    public static boolean attackTarget(RobotController rc, Mem m, MapLocation target, boolean isFocusTarget) throws GameActionException {
+    public static boolean attackTarget(RobotController rc, Mem m, MapLocation target) throws GameActionException {
         if (target == null) return false;
 
         // Calculate cheese to spend
@@ -250,13 +232,7 @@ public class HaulerDefense {
                     cheeseToSpend = Math.min(HAULER_DEFENSE_BITE_BOOST, rawCheese);
                 }
 
-                // === FOCUS FIRE BOOST: Spend more on king-designated target ===
-                if (isFocusTarget) {
-                    // Double the cheese spend for focus targets to kill faster
-                    cheeseToSpend = Math.min(cheeseToSpend * 2, rawCheese + Math.min(globalCheese / 5, 40));
-                }
-
-                // If enemy is very close to king, spend even more
+                // If enemy is very close to king, spend more
                 if (m.kingLocation != null && target.distanceSquaredTo(m.kingLocation) <= 9) {
                     cheeseToSpend = Math.min(KING_ATTACK_CHEESE_BOOST, rawCheese + Math.min(globalCheese / 3, 30));
                 }
@@ -269,15 +245,6 @@ public class HaulerDefense {
         }
 
         return false;
-    }
-
-    /**
-     * Attack the target with appropriate cheese boost.
-     * Returns true if attack was successful.
-     * (Legacy overload - assumes not focus target)
-     */
-    public static boolean attackTarget(RobotController rc, Mem m, MapLocation target) throws GameActionException {
-        return attackTarget(rc, m, target, false);
     }
 
     /**
@@ -348,7 +315,6 @@ public class HaulerDefense {
     /**
      * Squeak for defensive backup.
      * Alerts nearby haulers and attackers that king needs help.
-     * Enhanced to also squeak help at our location for focus fire.
      */
     public static boolean squeakForDefense(RobotController rc, Mem m) throws GameActionException {
         int roundNum = rc.getRoundNum();
@@ -356,65 +322,17 @@ public class HaulerDefense {
         // Cooldown check
         if (roundNum - m.lastDefenseSqueak < SQUEAK_COOLDOWN) return false;
 
-        // Check if cat is nearby - don't squeak if cat would hear us
-        RobotInfo[] nearby = rc.senseNearbyRobots(16);
-        for (RobotInfo r : nearby) {
-            if (r.getType() == UnitType.CAT) {
-                int distSq = rc.getLocation().distanceSquaredTo(r.getLocation());
-                if (distSq <= 16) {
-                    return false; // Cat too close, don't squeak
-                }
-            }
+        // Use the existing squeak encoding for king danger
+        int msg = encodeMsg(MSG_KING_DANGER, m.kingLocation.x, m.kingLocation.y);
+
+        // Squeak is always available if action cooldown permits
+        if (rc.getActionCooldownTurns() < 10) {
+            rc.squeak(msg);
+            m.lastDefenseSqueak = roundNum;
+            return true;
         }
 
-        // Alternate between MSG_KING_DANGER and MSG_HELP for better coordination
-        // MSG_KING_DANGER alerts about king, MSG_HELP brings allies to our position
-        int msg;
-        if (m.currentDefenseTarget != null && roundNum % 2 == 0) {
-            // Squeak HELP at enemy location to focus fire
-            msg = encodeMsg(MSG_HELP, m.currentDefenseTarget.x, m.currentDefenseTarget.y);
-        } else if (m.kingLocation != null) {
-            // Squeak about king danger
-            msg = encodeMsg(MSG_KING_DANGER, m.kingLocation.x, m.kingLocation.y);
-        } else {
-            // Fallback: squeak help at our location
-            MapLocation here = rc.getLocation();
-            msg = encodeMsg(MSG_HELP, here.x, here.y);
-        }
-
-        rc.squeak(msg);
-        m.lastDefenseSqueak = roundNum;
-        return true;
-    }
-
-    /**
-     * Squeak to coordinate focus fire on a specific enemy.
-     * Call when you've identified a priority target (low HP, threatening king, etc.)
-     */
-    public static boolean squeakFocusFire(RobotController rc, Mem m, MapLocation enemyLoc) throws GameActionException {
-        if (enemyLoc == null) return false;
-
-        int roundNum = rc.getRoundNum();
-
-        // Use help squeak cooldown
-        if (roundNum - m.lastDefenseSqueak < SQUEAK_COOLDOWN / 2) return false;
-
-        // Check for nearby cat
-        RobotInfo[] nearby = rc.senseNearbyRobots(16);
-        for (RobotInfo r : nearby) {
-            if (r.getType() == UnitType.CAT) {
-                int distSq = rc.getLocation().distanceSquaredTo(r.getLocation());
-                if (distSq <= 16) {
-                    return false; // Cat too close
-                }
-            }
-        }
-
-        // Squeak MSG_HELP at enemy location - allies will converge there
-        int msg = encodeMsg(MSG_HELP, enemyLoc.x, enemyLoc.y);
-        rc.squeak(msg);
-        m.lastDefenseSqueak = roundNum;
-        return true;
+        return false;
     }
 
     /**
@@ -660,5 +578,225 @@ public class HaulerDefense {
         }
 
         return false;
+    }
+
+    // ===== REACTIVE SWARM DEFENSE - SQUEAK COORDINATION =====
+
+    /**
+     * Check for defense squeaks from nearby allies.
+     * Returns the enemy target location if a defense squeak was heard.
+     *
+     * Note: Squeaks are only received within sqrt(16) = 4 tiles of sender.
+     * For broader coordination, we also check the shared array.
+     */
+    public static MapLocation checkDefenseSqueaks(RobotController rc, Mem m) throws GameActionException {
+        int currentRound = rc.getRoundNum();
+
+        // Read all available squeaks (-1 means read all)
+        Message[] messages = rc.readSqueaks(-1);
+
+        MapLocation bestTarget = null;
+        int bestPriority = Integer.MAX_VALUE;  // Lower = higher priority
+
+        for (Message msg : messages) {
+            // Skip old messages
+            int msgRound = msg.getRound();
+            if (currentRound - msgRound > SQUEAK_LISTEN_ROUNDS) {
+                continue;
+            }
+
+            int content = msg.getBytes();
+            int type = decodeType(content);
+
+            // Respond to enemy target squeaks and king danger squeaks
+            if (type == MSG_ENEMY_TARGET || type == MSG_KING_DANGER) {
+                int x = decodeX(content);
+                int y = decodeY(content);
+                MapLocation targetLoc = new MapLocation(x, y);
+
+                // Prioritize by distance to our king (closer = more urgent)
+                if (m.kingLocation != null) {
+                    int distToKing = targetLoc.distanceSquaredTo(m.kingLocation);
+                    if (distToKing < bestPriority) {
+                        bestPriority = distToKing;
+                        bestTarget = targetLoc;
+                    }
+                } else {
+                    bestTarget = targetLoc;
+                }
+            }
+        }
+
+        // Also check shared array for coordinated target (set by king or other defenders)
+        int sharedX = rc.readSharedArray(DEFENSE_TARGET_X);
+        int sharedY = rc.readSharedArray(DEFENSE_TARGET_Y);
+        int sharedRound = rc.readSharedArray(DEFENSE_TARGET_ROUND);
+
+        // Shared target valid if set within last 15 rounds
+        if (sharedX != 0 && (currentRound - sharedRound + 1000) % 1000 < 15) {
+            MapLocation sharedTarget = new MapLocation(sharedX, sharedY);
+
+            // Prefer shared target if it's closer to king than squeak target
+            if (m.kingLocation != null) {
+                int distToKing = sharedTarget.distanceSquaredTo(m.kingLocation);
+                if (distToKing < bestPriority) {
+                    bestTarget = sharedTarget;
+                }
+            } else if (bestTarget == null) {
+                bestTarget = sharedTarget;
+            }
+        }
+
+        return bestTarget;
+    }
+
+    /**
+     * Squeak enemy location for focus fire coordination.
+     * All defenders hearing this should attack the same target.
+     */
+    public static boolean squeakEnemyTarget(RobotController rc, Mem m, MapLocation enemyLoc) throws GameActionException {
+        if (enemyLoc == null) return false;
+        if (rc.getActionCooldownTurns() >= 10) return false;
+
+        int roundNum = rc.getRoundNum();
+
+        // Shorter cooldown for defense squeaks - coordination is critical
+        if (roundNum - m.lastDefenseSqueak < DEFENSE_SQUEAK_COOLDOWN) return false;
+
+        int msg = encodeMsg(MSG_ENEMY_TARGET, enemyLoc.x, enemyLoc.y);
+        rc.squeak(msg);
+        m.lastDefenseSqueak = roundNum;
+        return true;
+    }
+
+    /**
+     * Select THE target all defenders should attack (focus fire).
+     *
+     * Priority order:
+     * 1. Shared array target (if still valid and visible)
+     * 2. Lowest HP enemy near king (quick kills)
+     * 3. Enemy closest to king (most dangerous)
+     *
+     * Also broadcasts target via squeak for coordination.
+     */
+    public static MapLocation selectFocusFireTarget(RobotController rc, Mem m) throws GameActionException {
+        if (m.kingLocation == null) return null;
+
+        MapLocation here = rc.getLocation();
+        int currentRound = rc.getRoundNum();
+        Team enemyTeam = rc.getTeam().opponent();
+
+        // 1. Check if shared target is still valid
+        int sharedX = rc.readSharedArray(DEFENSE_TARGET_X);
+        int sharedY = rc.readSharedArray(DEFENSE_TARGET_Y);
+        int sharedRound = rc.readSharedArray(DEFENSE_TARGET_ROUND);
+
+        if (sharedX != 0 && (currentRound - sharedRound + 1000) % 1000 < 10) {
+            MapLocation sharedTarget = new MapLocation(sharedX, sharedY);
+
+            // Verify target still exists at that location
+            if (rc.canSenseLocation(sharedTarget)) {
+                RobotInfo robot = rc.senseRobotAtLocation(sharedTarget);
+                if (robot != null && robot.getTeam() == enemyTeam) {
+                    // Shared target still valid - use it
+                    return sharedTarget;
+                }
+            }
+        }
+
+        // 2. Find best target among visible enemies near king
+        RobotInfo[] nearbyEnemies = rc.senseNearbyRobots(-1, enemyTeam);
+
+        RobotInfo bestTarget = null;
+        int lowestHP = Integer.MAX_VALUE;
+        int closestToKing = Integer.MAX_VALUE;
+
+        for (RobotInfo enemy : nearbyEnemies) {
+            // Only target baby rats and rat kings
+            if (enemy.getType() != UnitType.BABY_RAT && enemy.getType() != UnitType.RAT_KING) {
+                continue;
+            }
+
+            MapLocation enemyLoc = enemy.getLocation();
+            int distToKing = enemyLoc.distanceSquaredTo(m.kingLocation);
+
+            // Only consider enemies within threat radius of king (~7 tiles = 49 dist²)
+            if (distToKing > KING_THREAT_RADIUS) continue;
+
+            int hp = enemy.getHealth();
+
+            // Priority:
+            // 1) Enemies adjacent to king (dist² <= 18 covers king's 3x3 + 1 tile)
+            // 2) Lowest HP (quick kills reduce enemy DPS)
+            // 3) Closest to king (most threatening)
+
+            boolean isBetter = false;
+
+            if (bestTarget == null) {
+                isBetter = true;
+            } else {
+                int bestDistToKing = bestTarget.getLocation().distanceSquaredTo(m.kingLocation);
+                int bestHP = bestTarget.getHealth();
+
+                // Critical zone: adjacent to king (highest priority)
+                boolean enemyInCritical = distToKing <= 18;
+                boolean bestInCritical = bestDistToKing <= 18;
+
+                if (enemyInCritical && !bestInCritical) {
+                    isBetter = true;  // Prioritize critical zone
+                } else if (enemyInCritical == bestInCritical) {
+                    // Same zone - prefer lower HP
+                    if (hp < bestHP) {
+                        isBetter = true;
+                    } else if (hp == bestHP && distToKing < bestDistToKing) {
+                        isBetter = true;  // Same HP, prefer closer to king
+                    }
+                }
+            }
+
+            if (isBetter) {
+                bestTarget = enemy;
+                lowestHP = hp;
+                closestToKing = distToKing;
+            }
+        }
+
+        if (bestTarget != null) {
+            MapLocation targetLoc = bestTarget.getLocation();
+
+            // Squeak this target for other defenders to focus fire
+            squeakEnemyTarget(rc, m, targetLoc);
+
+            // Update our tracked target
+            m.currentDefenseTarget = targetLoc;
+            m.defenseTargetRound = currentRound;
+
+            return targetLoc;
+        }
+
+        return null;
+    }
+
+    /**
+     * Check if we should respond to a defense alert.
+     * Returns true if:
+     * 1. We're within response range of our king
+     * 2. The threat is near our king
+     */
+    public static boolean shouldRespondToDefense(RobotController rc, Mem m, MapLocation threatLoc) throws GameActionException {
+        if (m.kingLocation == null) return false;
+        if (threatLoc == null) return false;
+
+        MapLocation here = rc.getLocation();
+
+        // Check if we're within response range of king (~7 tiles)
+        int distToKing = here.distanceSquaredTo(m.kingLocation);
+        if (distToKing > HAULER_DEFEND_RADIUS_SQ) return false;
+
+        // Check if threat is actually near our king
+        int threatDistToKing = threatLoc.distanceSquaredTo(m.kingLocation);
+        if (threatDistToKing > KING_THREAT_RADIUS) return false;
+
+        return true;
     }
 }

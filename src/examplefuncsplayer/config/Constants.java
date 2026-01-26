@@ -40,18 +40,18 @@ public final class Constants {
     public static final int KING_ATTACK_CHEESE_BOOST = 50;
 
     // ===== HAULER DEFENSE SYSTEM =====
-    public static final int HAULER_DEFEND_RADIUS = 36;          // dist² to king to trigger defense mode (~6 tiles)
-    public static final int HAULER_DEFEND_RADIUS_SQ = 64;       // 8 tiles - haulers defend within this range of king
+    public static final int HAULER_DEFEND_RADIUS = 49;          // dist² to king to trigger defense mode (~7 tiles)
+    public static final int HAULER_DEFEND_RADIUS_SQ = 49;       // 7 tiles - haulers defend within this range of king
     public static final int HAULER_DEFEND_ENGAGE_RADIUS = 25;   // dist² to engage enemies (~5 tiles)
-    public static final int KING_THREAT_RADIUS = 64;            // dist² from king to consider enemy a threat (~8 tiles)
-    public static final int HAULER_DEFENSE_BITE_BOOST = 20;     // Cheese to spend on defensive bites
-    public static final int HAULER_TRAP_COOLDOWN = 15;          // Rounds between trap placements
-    public static final int HAULER_MAX_DEFENSE_TRAPS = 8;       // Max traps a single hauler will place
-    public static final int HAULER_FOCUS_FIRE_ROUNDS = 20;      // How long to keep focusing same target
-    public static final int LOW_HP_THRESHOLD = 40;              // HP below which target is "low HP" priority
-    public static final int HAULER_ATTACK_CHEESE_BOOST = 25;    // Cheese to spend on attacks when defending
+    public static final int KING_THREAT_RADIUS = 49;            // dist² from king to consider enemy a threat (~7 tiles)
+    public static final int HAULER_DEFENSE_BITE_BOOST = 25;     // Cheese to spend on defensive bites (increased)
+    public static final int HAULER_TRAP_COOLDOWN = 10;          // Rounds between trap placements (faster)
+    public static final int HAULER_MAX_DEFENSE_TRAPS = 12;      // Max traps a single hauler will place (increased)
+    public static final int HAULER_FOCUS_FIRE_ROUNDS = 15;      // How long to keep focusing same target
+    public static final int LOW_HP_THRESHOLD = 50;              // HP below which target is "low HP" priority (half health)
+    public static final int HAULER_ATTACK_CHEESE_BOOST = 30;    // Cheese to spend on attacks when defending
     public static final int MIN_ALLIES_FOR_DEFENSE = 2;         // Minimum allies needed to engage enemies
-    public static final int OFFENSIVE_TRAP_CHEESE_THRESHOLD = 50; // Min cheese reserve for offensive traps
+    public static final int OFFENSIVE_TRAP_CHEESE_THRESHOLD = 40; // Min cheese reserve for offensive traps (lowered)
     public static final int HAULER_SPAWN_INTERVAL = 14;         // Slower spawn rate for ongoing hauler spawns
 
     // King mobility constants
@@ -60,7 +60,8 @@ public final class Constants {
     public static final int KING_SWARM_THRESHOLD = 3;          // Escape if this many enemies nearby
 
     // ===== COMBAT & SWARMING =====
-    public static final int SQUEAK_COOLDOWN = 8;              // Rounds between squeaks (avoid cat attention)
+    public static final int SQUEAK_COOLDOWN = 5;              // Rounds between squeaks (reduced for faster coordination)
+    public static final int DEFENSE_SQUEAK_COOLDOWN = 3;      // Faster cooldown for defense target squeaks
     public static final int SQUEAK_LISTEN_ROUNDS = 5;         // How far back to read messages
     public static final int SWARM_RESPONSE_DISTANCE_SQ = 999; // Respond to squeaks within 20 units
     public static final int TRAP_CHEESE_THRESHOLD = 200;      // Min cheese to place offensive traps

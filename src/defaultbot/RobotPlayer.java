@@ -12,9 +12,10 @@ import static examplefuncsplayer.config.Shared.*;
  * Thin dispatcher: routes each unit to its role file.
  * All constants/state machines live in config/ + units/.
  *
- * Spawning Logic: 50/50 SPLIT
- * - 50% of spawned BabyRats become BabyRatAttackers (attack enemy king)
- * - 50% of spawned BabyRats become BabyRatHaulers (gather cheese)
+ * Spawning Logic: HAULERS FIRST
+ * - First INITIAL_HAULER_COUNT baby rats become haulers
+ * - Remaining baby rats become attackers
+ * - Role is determined by spawn order (ID relative to King's ID)
  */
 public class RobotPlayer {
 
@@ -37,11 +38,19 @@ public class RobotPlayer {
                 } else if (type == UnitType.BABY_RAT) {
                     // Decide role on first turn only (role is permanent)
                     if (!roleDecided) {
-                        // 50/50 split: even IDs are attackers, odd IDs are haulers
-                        isAttacker = (rc.getID() % 2 == 0);
+                        // Calculate spawn order based on ID difference from King
+                        int kingID = rc.readSharedArray(KING_ID_INDEX);
+                        int myIDMod = rc.getID() % 1000;
+
+                        // Calculate spawn order (handle wrap-around for mod 1000)
+                        int spawnOrder = myIDMod - kingID;
+                        if (spawnOrder < 0) spawnOrder += 1000;
+
+                        // First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
+                        isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
                         roleDecided = true;
 
-                        System.out.println("ID:" + rc.getID() + " role:" + (isAttacker ? "ATTACKER" : "HAULER") + " (50/50 split)");
+                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
                     }
 
                     if (isAttacker) {

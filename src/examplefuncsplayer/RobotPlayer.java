@@ -12,11 +12,10 @@ import static examplefuncsplayer.config.Shared.*;
  * Thin dispatcher: routes each unit to its role file.
  * All constants/state machines live in config/ + units/.
  *
- * Spawning Logic:
- * - Phase 0: Initial Hauler Phase - spawn 30 haulers first
- * - Phase 1: Initial Attacker Phase - spawn 30 attackers
- * - Phase 2: Main Hauler Phase - spawn haulers continuously
- * - Phase 3: Attacker Wave Phase - spawn 8 attackers, then back to Phase 2
+ * Spawning Logic: HAULERS FIRST
+ * - First INITIAL_HAULER_COUNT baby rats become haulers
+ * - Remaining baby rats become attackers
+ * - Role is determined by spawn order (ID relative to King's ID)
  */
 public class RobotPlayer {
 
@@ -39,20 +38,14 @@ public class RobotPlayer {
                 } else if (type == UnitType.BABY_RAT) {
                     // Decide role on first turn only (role is permanent)
                     if (!roleDecided) {
-                        // Read spawn phase from shared array
-                        // Phase 0 = initial haulers, Phase 1 = initial attackers
-                        // Phase 2 = main haulers, Phase 3 = attacker wave
-                        int spawnPhase = rc.readSharedArray(SPAWN_PHASE_INDEX);
+                        // Read spawn count - this was set by King before spawning us
+                        int spawnOrder = rc.readSharedArray(SPAWN_COUNT_INDEX);
 
-                        // Attacker phases are 1 and 3; hauler phases are 0 and 2
-                        isAttacker = (spawnPhase == 1 || spawnPhase == 3);
+                        // First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
+                        isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
                         roleDecided = true;
 
-                        // Debug output
-                        String phaseNames[] = {"INIT_HAULER", "INIT_ATTACKER", "MAIN_HAULER", "ATCK_WAVE"};
-                        System.out.println("ID:" + rc.getID() +
-                                " phase:" + phaseNames[spawnPhase] +
-                                " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
+                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
                     }
 
                     if (isAttacker) {

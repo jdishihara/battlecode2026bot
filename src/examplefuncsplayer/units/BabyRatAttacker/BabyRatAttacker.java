@@ -333,9 +333,8 @@ public class BabyRatAttacker {
      * Try to eliminate the current symmetry if we can prove it's wrong.
      * FIX: Now takes effectiveSymmetry as parameter instead of reading globalSymmetry.
      *
-     * STRICT ELIMINATION: Rats must get VERY close (adjacent or nearly adjacent)
-     * to the predicted king location before eliminating. This ensures they travel
-     * all the way to corners if needed.
+     * AGGRESSIVE ELIMINATION: We want rats to check locations quickly and move on.
+     * If we've been near a location for a while without finding the king, eliminate it.
      */
     static void tryEliminateCurrentSymmetry(RobotController rc, Mem m, int effectiveSymmetry, int roundNum)
             throws GameActionException {
@@ -354,10 +353,8 @@ public class BabyRatAttacker {
         String reason = "";
 
         // === CONDITION 1: Predicted location is too close to boundary for 3x3 king ===
-        // Check this first since it doesn't require being close
         int w = rc.getMapWidth();
         int h = rc.getMapHeight();
-        // King center must be at least 1 tile from edge (king is 3x3)
         if (predicted.x < 1 || predicted.x >= w - 1 ||
             predicted.y < 1 || predicted.y >= h - 1) {
             shouldEliminate = true;
@@ -365,7 +362,6 @@ public class BabyRatAttacker {
         }
 
         // === CONDITION 2: Predicted center is blocked by wall ===
-        // Can check from distance if we can sense it
         if (!shouldEliminate && rc.canSenseLocation(predicted)) {
             MapInfo info = rc.senseMapInfo(predicted);
             if (info.isWall()) {
@@ -374,46 +370,13 @@ public class BabyRatAttacker {
             }
         }
 
-        // === CONDITION 3: STRICT - Must be VERY close to eliminate ===
-        // Only eliminate if we're within 2 tiles (distSq <= 8) of the predicted CENTER
-        // This ensures rats go ALL THE WAY to corners
-        if (!shouldEliminate && distToPredicted <= 8) {
+        // === CONDITION 3: Mark as reached when within 5 tiles (distSq <= 25) ===
+        if (distToPredicted <= 25) {
             m.reachedCurrentTarget = true;
-
-            // We're right next to where the king should be - check thoroughly
-            boolean foundEnemyKing = false;
-            int tilesChecked = 0;
-
-            // Check the entire 3x3 area where king would be
-            for (int dx = -1; dx <= 1 && !foundEnemyKing; dx++) {
-                for (int dy = -1; dy <= 1 && !foundEnemyKing; dy++) {
-                    MapLocation checkLoc = new MapLocation(predicted.x + dx, predicted.y + dy);
-                    if (rc.canSenseLocation(checkLoc)) {
-                        tilesChecked++;
-                        RobotInfo robot = rc.senseRobotAtLocation(checkLoc);
-                        if (robot != null &&
-                            robot.getType() == UnitType.RAT_KING &&
-                            robot.getTeam() == rc.getTeam().opponent()) {
-                            foundEnemyKing = true;
-                        }
-                    }
-                }
-            }
-
-            // Must have checked ALL 9 tiles of the 3x3 area to be sure
-            if (!foundEnemyKing && tilesChecked >= 9) {
-                shouldEliminate = true;
-                reason = "confirmed_empty";
-            }
-            // If we checked at least 6 tiles and we're adjacent, that's good enough
-            else if (!foundEnemyKing && tilesChecked >= 6 && distToPredicted <= 2) {
-                shouldEliminate = true;
-                reason = "adjacent_empty";
-            }
         }
 
-        // === CONDITION 4: We're close (within 4 tiles) and can see the ENTIRE 3x3 area is empty ===
-        if (!shouldEliminate && distToPredicted <= 16) {
+        // === CONDITION 4: Visual confirmation - can we see the predicted area is empty? ===
+        if (!shouldEliminate && distToPredicted <= 20) {
             boolean foundKing = false;
             int tilesChecked = 0;
 
@@ -432,29 +395,35 @@ public class BabyRatAttacker {
                 }
             }
 
-            // Only eliminate if we checked ALL 9 tiles
-            if (!foundKing && tilesChecked >= 9) {
+            // Eliminate if we can see most of the 3x3 area and no king
+            if (!foundKing && tilesChecked >= 5) {
                 shouldEliminate = true;
-                reason = "visual_confirm_all9";
+                reason = "visual_confirm";
                 m.reachedCurrentTarget = true;
             }
         }
 
-        // === CONDITION 5: Timeout - but ONLY if we've actually reached the target ===
-        // Much longer timeout, and require being close
-        int timeoutThreshold = SYMMETRY_SEARCH_TIMEOUT * 2; // Double the timeout
+        // === CONDITION 5: Proximity timeout - been close to target for a while ===
+        // If we've reached the target area and stayed for 15+ rounds, move on
+        if (!shouldEliminate && m.reachedCurrentTarget) {
+            // Count how long we've been near this target
+            if (distToPredicted <= 36) {  // Within 6 tiles
+                if (m.roundsSearchingCurrentSymmetry >= 15) {
+                    shouldEliminate = true;
+                    reason = "proximity_timeout";
+                }
+            } else if (m.roundsSearchingCurrentSymmetry >= 30) {
+                // Wandered away from target but still "reached" - shorter timeout
+                shouldEliminate = true;
+                reason = "reached_and_timeout";
+            }
+        }
 
-        if (!shouldEliminate && m.roundsSearchingCurrentSymmetry > timeoutThreshold) {
-            // Only timeout-eliminate if we actually got close
-            if (m.reachedCurrentTarget && distToPredicted <= 16) {
-                shouldEliminate = true;
-                reason = "timeout_at_target";
-            }
-            // Or if we've been searching for a VERY long time and are reasonably close
-            else if (m.roundsSearchingCurrentSymmetry > timeoutThreshold * 2 && distToPredicted <= 50) {
-                shouldEliminate = true;
-                reason = "timeout_extended";
-            }
+        // === CONDITION 6: General timeout - been searching this symmetry too long ===
+        if (!shouldEliminate && m.roundsSearchingCurrentSymmetry >= SYMMETRY_SEARCH_TIMEOUT) {
+            // Even if we haven't reached the target, eventually move on
+            shouldEliminate = true;
+            reason = "general_timeout";
         }
 
         // === ELIMINATE THIS SYMMETRY ===
@@ -564,22 +533,20 @@ public class BabyRatAttacker {
         }
 
         int distToTarget = here.distanceSquaredTo(symmetryTarget);
+        m.currentTarget = symmetryTarget;
 
-        // No spread - all attackers converge on the same target as a tight group
-        MapLocation moveTarget = symmetryTarget;
-
-        m.currentTarget = moveTarget;
-
-        // Check if we've reached the target area (within 3 tiles)
-        if (distToTarget <= 9) {
+        // Mark as reached when within 5 tiles (consistent with elimination check)
+        if (distToTarget <= 25) {
             m.reachedCurrentTarget = true;
         }
 
         // Debug: show which symmetry we're actually heading to
+        String symName = effectiveSymmetry == SYM_ROTATIONAL ? "ROT" :
+                         effectiveSymmetry == SYM_HORIZONTAL ? "HOR" : "VER";
         rc.setIndicatorLine(here, symmetryTarget, 255, 255, 0); // Yellow line to target
 
-        // Use tight cluster movement - stay adjacent to allies while advancing
-        formationMoveCluster(rc, m, moveTarget, roundNum, nearbyAllies);
+        // Use formation movement - leaders advance, followers follow
+        formationMoveCluster(rc, m, symmetryTarget, roundNum, nearbyAllies);
     }
 
     static void runAttack(RobotController rc, Mem m, int roundNum) throws GameActionException {
@@ -609,47 +576,15 @@ public class BabyRatAttacker {
             }
         }
 
-        // === FOCUS FIRE: Check for king-designated target first ===
-        MapLocation focusTarget = getFocusTarget(rc);
-        if (focusTarget != null && here.distanceSquaredTo(focusTarget) <= 2) {
-            // Focus target is adjacent - attack it with priority
-            int focusSpend = shouldGangUp ?
-                Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
-                Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-            if (rc.canAttack(focusTarget, focusSpend)) {
-                rc.attack(focusTarget, focusSpend);
-                return;
-            }
-        }
-
-        // === ALSO ATTACK ENEMY BABY RATS (prefer focus target if in range) ===
+        // === ALSO ATTACK ENEMY BABY RATS ===
         RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
-
-        // Sort enemies by focus target match, then by HP (lowest first)
-        RobotInfo bestEnemy = null;
-        int bestScore = Integer.MAX_VALUE;
         for (RobotInfo enemy : enemies) {
             if (enemy.getType() == UnitType.BABY_RAT) {
-                MapLocation enemyLoc = enemy.getLocation();
-                // Score: focus target gets -1000, then add HP
-                int score = enemy.getHealth();
-                if (focusTarget != null && enemyLoc.equals(focusTarget)) {
-                    score -= 1000; // Massive priority boost for focus target
+                int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
+                if (rc.canAttack(enemy.getLocation(), spend)) {
+                    rc.attack(enemy.getLocation(), spend);
+                    return;
                 }
-                if (score < bestScore && here.distanceSquaredTo(enemyLoc) <= 2) {
-                    bestScore = score;
-                    bestEnemy = enemy;
-                }
-            }
-        }
-
-        if (bestEnemy != null) {
-            int spend = shouldGangUp ?
-                Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
-                Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-            if (rc.canAttack(bestEnemy.getLocation(), spend)) {
-                rc.attack(bestEnemy.getLocation(), spend);
-                return;
             }
         }
 
@@ -662,54 +597,38 @@ public class BabyRatAttacker {
             }
         }
 
-        // === MOVE TOWARD FOCUS TARGET OR KING AS TIGHT CLUSTER ===
-        MapLocation moveTarget = (focusTarget != null && here.distanceSquaredTo(focusTarget) > 2)
-            ? focusTarget : m.targetKingLoc;
-        m.currentTarget = moveTarget;
+        // === MOVE TOWARD TARGET AS TIGHT CLUSTER ===
+        m.currentTarget = m.targetKingLoc;
         RobotInfo[] nearbyAllies = rc.senseNearbyRobots(CLUSTER_SENSE_RADIUS_SQ, rc.getTeam());
-        formationMoveCluster(rc, m, moveTarget, roundNum, nearbyAllies);
+        formationMoveCluster(rc, m, m.targetKingLoc, roundNum, nearbyAllies);
     }
 
     static void runGuard(RobotController rc, Mem m, int roundNum) throws GameActionException {
         MapLocation here = rc.getLocation();
 
-        // === CHECK FOCUS FIRE TARGET FIRST ===
-        MapLocation focusTarget = getFocusTarget(rc);
-
         // Find and attack nearby enemy rats
         RobotInfo[] enemies = rc.senseNearbyRobots(20, rc.getTeam().opponent());
-        RobotInfo bestEnemy = null;
-        int bestScore = Integer.MAX_VALUE;
+        RobotInfo closestEnemy = null;
+        int closestDist = Integer.MAX_VALUE;
 
         for (RobotInfo enemy : enemies) {
             if (enemy.getType() == UnitType.BABY_RAT) {
-                MapLocation enemyLoc = enemy.getLocation();
-                int dist = here.distanceSquaredTo(enemyLoc);
-                // Score: focus target gets -1000, then add distance
-                int score = dist;
-                if (focusTarget != null && enemyLoc.equals(focusTarget)) {
-                    score -= 1000; // Massive priority boost for focus target
-                }
-                // Also prefer low HP targets
-                score += enemy.getHealth();
-
-                if (score < bestScore) {
-                    bestScore = score;
-                    bestEnemy = enemy;
+                int dist = here.distanceSquaredTo(enemy.getLocation());
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closestEnemy = enemy;
                 }
             }
         }
 
-        if (bestEnemy != null) {
-            MapLocation enemyLoc = bestEnemy.getLocation();
-
+        if (closestEnemy != null) {
             // Place defensive trap
             if (m.kingLocation != null &&
                 rc.getGlobalCheese() >= RAT_TRAP_COST + 50 &&
                 roundNum - m.lastTrapRound >= 10) {
 
-                Direction toKing = enemyLoc.directionTo(m.kingLocation);
-                MapLocation trapLoc = enemyLoc.add(toKing);
+                Direction toKing = closestEnemy.getLocation().directionTo(m.kingLocation);
+                MapLocation trapLoc = closestEnemy.getLocation().add(toKing);
 
                 if (here.isAdjacentTo(trapLoc) && rc.canPlaceRatTrap(trapLoc)) {
                     rc.placeRatTrap(trapLoc);
@@ -717,19 +636,15 @@ public class BabyRatAttacker {
                 }
             }
 
-            // Attack the enemy - spend more on focus target
-            boolean isFocusTarget = focusTarget != null && enemyLoc.equals(focusTarget);
-            int spend = isFocusTarget ?
-                Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
-                Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-
-            if (rc.canAttack(enemyLoc, spend)) {
-                rc.attack(enemyLoc, spend);
+            // Attack the enemy
+            int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
+            if (rc.canAttack(closestEnemy.getLocation(), spend)) {
+                rc.attack(closestEnemy.getLocation(), spend);
                 return;
             }
 
-            m.currentTarget = enemyLoc;
-            attackerMoveToward(rc, m, enemyLoc);
+            m.currentTarget = closestEnemy.getLocation();
+            attackerMoveToward(rc, m, closestEnemy.getLocation());
             return;
         }
 

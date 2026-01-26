@@ -190,52 +190,17 @@ public class StateBehaviors {
     }
 
     public static void kingCounterAttack(RobotController rc) throws GameActionException {
-        MapLocation kingLoc = rc.getLocation();
-        RobotInfo[] enemies = rc.senseNearbyRobots(KING_THREAT_RADIUS, rc.getTeam().opponent());
-
-        // Track best focus fire target
-        RobotInfo bestTarget = null;
-        int bestPriority = Integer.MAX_VALUE;
+        RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
 
         for (RobotInfo enemy : enemies) {
             if (enemy.getType() == UnitType.BABY_RAT || enemy.getType() == UnitType.RAT_KING) {
-                // Calculate priority for focus fire
-                int priority = calcTargetPriority(enemy.getHealth(), enemy.getLocation().distanceSquaredTo(kingLoc));
-                if (priority < bestPriority) {
-                    bestPriority = priority;
-                    bestTarget = enemy;
+                MapLocation enemyLoc = enemy.getLocation();
+                int cheeseBoost = Math.min(KING_ATTACK_CHEESE_BOOST, rc.getGlobalCheese() / 10);
+
+                if (rc.canAttack(enemyLoc, cheeseBoost)) {
+                    rc.attack(enemyLoc, cheeseBoost);
+                    return;
                 }
-            }
-        }
-
-        // Update focus fire target for all allies
-        if (bestTarget != null) {
-            updateFocusTarget(rc, bestTarget, kingLoc);
-
-            // Try to attack the best target (or any adjacent enemy)
-            MapLocation bestLoc = bestTarget.getLocation();
-            int cheeseBoost = Math.min(KING_ATTACK_CHEESE_BOOST, rc.getGlobalCheese() / 10);
-
-            if (rc.canAttack(bestLoc, cheeseBoost)) {
-                rc.attack(bestLoc, cheeseBoost);
-                return;
-            }
-
-            // Fallback: attack any adjacent enemy
-            for (RobotInfo enemy : enemies) {
-                if (enemy.getType() == UnitType.BABY_RAT || enemy.getType() == UnitType.RAT_KING) {
-                    MapLocation enemyLoc = enemy.getLocation();
-                    if (rc.canAttack(enemyLoc, cheeseBoost)) {
-                        rc.attack(enemyLoc, cheeseBoost);
-                        return;
-                    }
-                }
-            }
-        } else {
-            // No enemies nearby - clear focus target if it's stale
-            MapLocation currentFocus = getFocusTarget(rc);
-            if (currentFocus == null) {
-                clearFocusTarget(rc);
             }
         }
     }

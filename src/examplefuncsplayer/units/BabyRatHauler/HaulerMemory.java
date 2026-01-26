@@ -88,47 +88,6 @@ public class HaulerMemory {
         public int lastOffensiveTrapRound = -100;        // Round when we last placed an offensive trap
         public int offensiveTrapCount = 0;               // Offensive traps this hauler has placed
 
-        // ===== COMBAT STATE (from AttackerMemory) =====
-        // Combat coordination
-        public MapLocation combatTarget = null;          // Current enemy we're focused on
-        public int combatTargetHP = 0;                   // Last known HP of combat target
-        public int turnsSinceTargetSeen = 0;             // Turns since we saw the combat target
-        public MapLocation swarmTarget = null;           // Location to swarm to (from help squeak)
-        public int swarmStartRound = -100;               // When swarm was initiated
-        public int lastHelpSqueakRound = -100;           // Last round we squeaked for help
-        public int lastCatSqueakRound = -100;            // Last round we squeaked about cat
-
-        // Local swarm response (from nearby MSG_HELP squeaks)
-        public MapLocation localSwarmTarget = null;
-        public int localSwarmUntilRound = -1;
-
-        // Cat memory (for avoidance while in combat)
-        public MapLocation lastCatLoc = null;            // Last known cat location
-        public int lastCatSeenRound = -100;              // Round when cat was last seen
-        public MapLocation turnCatLoc = null;            // Cat location this turn (null if none)
-        public int turnCatBand = 0;                      // Distance band this turn (0=none, 1=caution, 2=danger, 3=panic)
-
-        // Cluster movement (for coordinated attacks)
-        public MapLocation prev1 = null;                 // Previous position (for anti-oscillation)
-        public MapLocation prev2 = null;                 // Two positions ago
-        public int alliesNearby = 0;                     // Count of nearby allies (cached per turn)
-
-        // Focus fire tracking
-        public MapLocation focusFireTarget = null;       // King-designated target
-        public int focusFireRound = -100;                // When focus target was set
-
-        // ===== ALPHA STRIKE COORDINATION =====
-        public MapLocation alphaStrikeTarget = null;     // Team-coordinated attack target
-        public int alphaStrikeRound = -100;              // When alpha strike was called
-
-        // ===== RATNAPPING STATE =====
-        public boolean isCarryingEnemy = false;          // Whether we're carrying an enemy
-        public int carryStartRound = -100;               // When we started carrying
-
-        // ===== TRAP PLACEMENT TRACKING =====
-        public MapLocation lastTrapPlaced = null;        // Location of last trap we placed
-        public int lastTrapRound = -100;                 // When we placed it
-
         public final Random rng;
 
         public Mem(int id) {

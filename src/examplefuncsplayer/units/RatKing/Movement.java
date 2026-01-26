@@ -3,6 +3,7 @@ package examplefuncsplayer.units.RatKing;
 import battlecode.common.*;
 
 import static examplefuncsplayer.config.Constants.*;
+import static examplefuncsplayer.config.Shared.*;
 
 /**
  * Movement and escape methods for the Rat King.
@@ -198,6 +199,9 @@ public class Movement {
             for (int dy = -2; dy <= 2; dy++) {
                 MapLocation spawnLoc = new MapLocation(myLocation.x + dx, myLocation.y + dy);
                 if (rc.canBuildRat(spawnLoc)) {
+                    // Increment spawn count BEFORE spawning so baby rat can read it
+                    int currentCount = rc.readSharedArray(SPAWN_COUNT_INDEX);
+                    rc.writeSharedArray(SPAWN_COUNT_INDEX, currentCount + 1);
                     rc.buildRat(spawnLoc);
                     return;
                 }
