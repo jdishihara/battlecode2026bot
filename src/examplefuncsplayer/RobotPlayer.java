@@ -38,14 +38,26 @@ public class RobotPlayer {
                 } else if (type == UnitType.BABY_RAT) {
                     // Decide role on first turn only (role is permanent)
                     if (!roleDecided) {
-                        // Read spawn count - this was set by King before spawning us
-                        int spawnOrder = rc.readSharedArray(SPAWN_COUNT_INDEX);
+                        // Calculate spawn order based on ID difference from King
+                        int kingID = rc.readSharedArray(KING_ID_INDEX);
+                        int myIDMod = rc.getID() % 1000;
 
-                        // First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
-                        isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
+                        // Calculate spawn order (handle wrap-around for mod 1000)
+                        int spawnOrder = myIDMod - kingID;
+                        if (spawnOrder < 0) spawnOrder += 1000;
+
+                        // Determine role based on spawn mode
+                        if (CURRENT_SPAWN_MODE == SPAWN_MODE_HAULERS_ONLY) {
+                            isAttacker = false;
+                        } else if (CURRENT_SPAWN_MODE == SPAWN_MODE_ATTACKERS_ONLY) {
+                            isAttacker = true;
+                        } else {
+                            // SPAWN_MODE_BALANCED: First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
+                            isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
+                        }
                         roleDecided = true;
 
-                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
+                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " mode:" + CURRENT_SPAWN_MODE + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
                     }
 
                     if (isAttacker) {

@@ -62,7 +62,15 @@ public final class Shared {
     public static final int OUR_RAT_COUNT_INDEX = 32;     // Our baby rat count estimate
     public static final int KING_RESERVE = 300;           // Cheese reserve for king safety
 
-    // Initial spawn counts
+    // ===== SPAWN MODE CONFIGURATION =====
+    // Change CURRENT_SPAWN_MODE to switch between spawning strategies
+    public static final int SPAWN_MODE_BALANCED = 0;      // Normal: INITIAL_HAULER_COUNT haulers, then attackers
+    public static final int SPAWN_MODE_HAULERS_ONLY = 1;  // All rats become haulers
+    public static final int SPAWN_MODE_ATTACKERS_ONLY = 2; // All rats become attackers
+
+    public static final int CURRENT_SPAWN_MODE = SPAWN_MODE_HAULERS_ONLY;  // <-- CHANGE THIS TO SWITCH MODES
+
+    // Initial spawn counts (used when SPAWN_MODE_BALANCED)
     public static final int INITIAL_HAULER_COUNT = 30;    // Haulers to spawn first
     public static final int INITIAL_ATTACKER_COUNT = 30;  // Attackers to spawn after haulers
 

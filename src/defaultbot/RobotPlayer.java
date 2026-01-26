@@ -2,11 +2,11 @@ package defaultbot;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.RatKing.RatKing;
-import examplefuncsplayer.units.BabyRatAttacker.BabyRatAttacker;
-import examplefuncsplayer.units.BabyRatHauler.BabyRatHauler;
+import defaultbot.units.RatKing.RatKing;
+import defaultbot.units.BabyRatAttacker.BabyRatAttacker;
+import defaultbot.units.BabyRatHauler.BabyRatHauler;
 
-import static examplefuncsplayer.config.Shared.*;
+import static defaultbot.config.Shared.*;
 
 /**
  * Thin dispatcher: routes each unit to its role file.
@@ -46,11 +46,18 @@ public class RobotPlayer {
                         int spawnOrder = myIDMod - kingID;
                         if (spawnOrder < 0) spawnOrder += 1000;
 
-                        // First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
-                        isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
+                        // Determine role based on spawn mode
+                        if (CURRENT_SPAWN_MODE == SPAWN_MODE_HAULERS_ONLY) {
+                            isAttacker = false;
+                        } else if (CURRENT_SPAWN_MODE == SPAWN_MODE_ATTACKERS_ONLY) {
+                            isAttacker = true;
+                        } else {
+                            // SPAWN_MODE_BALANCED: First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
+                            isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
+                        }
                         roleDecided = true;
 
-                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
+                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " mode:" + CURRENT_SPAWN_MODE + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
                     }
 
                     if (isAttacker) {
