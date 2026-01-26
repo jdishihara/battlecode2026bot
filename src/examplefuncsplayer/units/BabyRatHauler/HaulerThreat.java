@@ -14,11 +14,36 @@ import static examplefuncsplayer.config.Constants.*;
 public class HaulerThreat {
 
     /**
+     * Check if an enemy rat is facing away from us (can't see us).
+     * Baby rats have a 90° vision cone facing forward.
+     * Returns true if we are OUTSIDE their vision cone.
+     */
+    public static boolean isEnemyFacingAway(MapLocation ourLoc, RobotInfo enemy) {
+        if (enemy == null) return false;
+
+        MapLocation enemyLoc = enemy.getLocation();
+        Direction enemyFacing = enemy.getDirection();
+
+        // Baby rats have 90° cone = facing direction ± 45°
+        Direction toUs = enemyLoc.directionTo(ourLoc);
+
+        // If toUs matches enemyFacing or its immediate rotations, we're in their cone
+        if (toUs == enemyFacing) return false;
+        if (toUs == enemyFacing.rotateLeft()) return false;
+        if (toUs == enemyFacing.rotateRight()) return false;
+
+        // We're outside their vision cone - they can't see us!
+        return true;
+    }
+
+    /**
      * Compute threat level from nearest cat AND enemy rats.
      * Returns ThreatInfo with level and source location.
+     * Also identifies attackable enemies (HP advantage or facing away).
      */
     public static ThreatInfo computeThreat(RobotController rc, Mem m) throws GameActionException {
         MapLocation here = rc.getLocation();
+        int myHP = rc.getHealth();
 
         // Sense once with max radius to minimize bytecode
         final int MAX_SENSE_RADIUS = Math.max(CAT_FLEE_RADIUS + 3, ENEMY_FLEE_RADIUS);
@@ -29,16 +54,60 @@ public class HaulerThreat {
         RobotInfo nearestCat = null, nearestEnemy = null;
         int catDistSq = Integer.MAX_VALUE, enemyDistSq = Integer.MAX_VALUE;
 
+        // Track best attackable enemy (we have advantage over)
+        RobotInfo bestAttackTarget = null;
+        int bestAttackScore = Integer.MIN_VALUE;
+        boolean bestTargetFacingAway = false;
+
+        // Count allies for swarming decision
+        int nearbyAllies = 0;
+
         for (RobotInfo r : nearbyRobots) {
             MapLocation loc = r.getLocation();
             int d = here.distanceSquaredTo(loc);
 
             if (r.getType() == UnitType.CAT) {
                 if (d < catDistSq) { catDistSq = d; nearestCat = r; }
+            } else if (r.getTeam() == myTeam && r.getType() == UnitType.BABY_RAT) {
+                // Count allies
+                nearbyAllies++;
             } else if (r.getTeam() != myTeam &&
                        (r.getType() == UnitType.BABY_RAT || r.getType() == UnitType.RAT_KING)) {
                 if (d < enemyDistSq && d <= ENEMY_FLEE_RADIUS * ENEMY_FLEE_RADIUS) {
                     enemyDistSq = d; nearestEnemy = r;
+                }
+
+                // Check if this enemy is attackable (we have advantage)
+                if (r.getType() == UnitType.BABY_RAT) {
+                    int enemyHP = r.getHealth();
+                    boolean facingAway = isEnemyFacingAway(here, r);
+
+                    // Score this target - higher = better to attack
+                    int score = 0;
+
+                    // HP advantage: we have more HP than them
+                    if (myHP > enemyHP) {
+                        score += 100 + (myHP - enemyHP); // Base score + HP difference
+                    }
+
+                    // Facing away: free hits, no retaliation
+                    if (facingAway) {
+                        score += 200; // Very high priority - guaranteed safe attack
+                    }
+
+                    // Low HP enemy: quick kill
+                    if (enemyHP <= LOW_HP_THRESHOLD) {
+                        score += 150; // Priority kill target
+                    }
+
+                    // Closer enemies are better targets
+                    score -= d; // Penalize distance
+
+                    if (score > bestAttackScore) {
+                        bestAttackScore = score;
+                        bestAttackTarget = r;
+                        bestTargetFacingAway = facingAway;
+                    }
                 }
             }
         }
@@ -81,7 +150,6 @@ public class HaulerThreat {
             // PANIC: enemy adjacent (can attack us)
             if (enemyDistSq <= 2) {
                 // Only panic if enemy has HP advantage or is a rat king
-                int myHP = rc.getHealth();
                 int enemyHP = nearestEnemy.getHealth();
                 if (enemyHP >= myHP || nearestEnemy.getType() == UnitType.RAT_KING) {
                     enemyThreat = ThreatLevel.PANIC;
@@ -150,6 +218,17 @@ public class HaulerThreat {
             finalSource = null;
         }
 
-        return new ThreatInfo(finalLevel, finalSource);
+        ThreatInfo result = new ThreatInfo(finalLevel, finalSource);
+
+        // Populate attackable enemy info for ATTACK state decisions
+        if (bestAttackTarget != null && bestAttackScore > 0) {
+            result.attackableEnemy = bestAttackTarget.getLocation();
+            result.attackableEnemyHP = bestAttackTarget.getHealth();
+            result.attackableEnemyId = bestAttackTarget.getID();
+            result.enemyFacingAway = bestTargetFacingAway;
+        }
+        result.nearbyAllies = nearbyAllies;
+
+        return result;
     }
 }

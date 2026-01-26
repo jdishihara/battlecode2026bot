@@ -14,7 +14,9 @@
       "Bash(./gradlew compileJava:*)",
       "Bash(find:*)",
       "Bash(./gradlew clean build:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(grep:*)",
+      "Bash(unzip:*)"
     ]
   }
 }

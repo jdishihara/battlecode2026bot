@@ -6,12 +6,50 @@ import static examplefuncsplayer.config.Constants.*;
 
 /**
  * Sensing helper methods for the Rat King.
+ * Uses cached sensing data to reduce bytecode usage.
  */
 public class Sensing {
 
+    // ===== CACHE MANAGEMENT =====
+
+    /**
+     * Initialize sensing cache at start of turn. Call this ONCE at the beginning of RatKing.run().
+     * Caches all nearby robots to avoid redundant senseNearbyRobots calls.
+     */
+    public static void initializeSensingCache(RobotController rc) throws GameActionException {
+        int currentRound = rc.getRoundNum();
+        if (KingRuntimeState.cacheRound != currentRound) {
+            KingRuntimeState.cachedNearbyRobots = rc.senseNearbyRobots(-1);
+            KingRuntimeState.cachedKingLocation = rc.getLocation();
+            KingRuntimeState.cacheRound = currentRound;
+        }
+    }
+
+    /**
+     * Get cached robots, initializing cache if needed (safety fallback).
+     */
+    private static RobotInfo[] getCachedRobots(RobotController rc) throws GameActionException {
+        if (KingRuntimeState.cacheRound != rc.getRoundNum()) {
+            initializeSensingCache(rc);
+        }
+        return KingRuntimeState.cachedNearbyRobots;
+    }
+
+    /**
+     * Get cached king location.
+     */
+    private static MapLocation getCachedLocation(RobotController rc) throws GameActionException {
+        if (KingRuntimeState.cacheRound != rc.getRoundNum()) {
+            initializeSensingCache(rc);
+        }
+        return KingRuntimeState.cachedKingLocation;
+    }
+
+    // ===== SENSING METHODS (using cache) =====
+
     public static RobotInfo findNearestCatForKing(RobotController rc) throws GameActionException {
-        RobotInfo[] nearbyRobots = rc.senseNearbyRobots(ALERT_RADIUS);
-        MapLocation myLocation = rc.getLocation();
+        RobotInfo[] nearbyRobots = getCachedRobots(rc);
+        MapLocation myLocation = getCachedLocation(rc);
 
         RobotInfo nearestCat = null;
         int minDist = Integer.MAX_VALUE;
@@ -19,7 +57,8 @@ public class Sensing {
         for (RobotInfo robot : nearbyRobots) {
             if (robot.getType() == UnitType.CAT) {
                 int dist = myLocation.distanceSquaredTo(robot.getLocation());
-                if (dist < minDist) {
+                // Preserve original ALERT_RADIUS filter
+                if (dist <= ALERT_RADIUS && dist < minDist) {
                     minDist = dist;
                     nearestCat = robot;
                 }
@@ -29,9 +68,9 @@ public class Sensing {
     }
 
     public static RobotInfo findNearestEnemyRat(RobotController rc) throws GameActionException {
-        RobotInfo[] nearbyRobots = rc.senseNearbyRobots(ALERT_RADIUS);
+        RobotInfo[] nearbyRobots = getCachedRobots(rc);
         Team enemy = rc.getTeam().opponent();
-        MapLocation myLocation = rc.getLocation();
+        MapLocation myLocation = getCachedLocation(rc);
 
         RobotInfo nearestEnemy = null;
         int minDist = Integer.MAX_VALUE;
@@ -40,7 +79,8 @@ public class Sensing {
             if (robot.getTeam() == enemy &&
                     (robot.getType() == UnitType.BABY_RAT || robot.getType() == UnitType.RAT_KING)) {
                 int dist = myLocation.distanceSquaredTo(robot.getLocation());
-                if (dist < minDist) {
+                // Preserve original ALERT_RADIUS filter
+                if (dist <= ALERT_RADIUS && dist < minDist) {
                     minDist = dist;
                     nearestEnemy = robot;
                 }
@@ -49,12 +89,18 @@ public class Sensing {
         return nearestEnemy;
     }
 
-    public static int countAlliedBabyRatsNearKing(RobotController rc, int radius) throws GameActionException {
-        RobotInfo[] robots = rc.senseNearbyRobots(radius);
+    public static int countAlliedBabyRatsNearKing(RobotController rc, int radiusSq) throws GameActionException {
+        RobotInfo[] robots = getCachedRobots(rc);
+        MapLocation myLocation = getCachedLocation(rc);
         int count = 0;
         Team myTeam = rc.getTeam();
         for (RobotInfo r : robots) {
-            if (r.getTeam() == myTeam && r.getType() == UnitType.BABY_RAT) count++;
+            if (r.getTeam() == myTeam && r.getType() == UnitType.BABY_RAT) {
+                // Preserve original radius filter
+                if (myLocation.distanceSquaredTo(r.getLocation()) <= radiusSq) {
+                    count++;
+                }
+            }
         }
         return count;
     }
@@ -63,42 +109,51 @@ public class Sensing {
      * Count enemy baby rats within a given distance squared.
      */
     public static int countNearbyEnemyRats(RobotController rc, int radiusSq) throws GameActionException {
-        RobotInfo[] robots = rc.senseNearbyRobots(radiusSq);
+        RobotInfo[] robots = getCachedRobots(rc);
+        MapLocation myLocation = getCachedLocation(rc);
         int count = 0;
         Team enemy = rc.getTeam().opponent();
         for (RobotInfo r : robots) {
-            if (r.getTeam() == enemy && r.getType() == UnitType.BABY_RAT) count++;
+            if (r.getTeam() == enemy && r.getType() == UnitType.BABY_RAT) {
+                // Preserve original radius filter
+                if (myLocation.distanceSquaredTo(r.getLocation()) <= radiusSq) {
+                    count++;
+                }
+            }
         }
         return count;
     }
 
     /**
-     * Find all enemy rats within a radius and return the closest ones.
-     * Useful for threat assessment.
+     * Find all enemy rats within a radius and return them.
+     * Optimized: single pass, reuses cached data.
      */
     public static RobotInfo[] findNearbyEnemyRats(RobotController rc, int radiusSq) throws GameActionException {
-        RobotInfo[] robots = rc.senseNearbyRobots(radiusSq);
+        RobotInfo[] robots = getCachedRobots(rc);
+        MapLocation myLocation = getCachedLocation(rc);
         Team enemy = rc.getTeam().opponent();
 
-        // Count enemies first
+        // Single pass: count and collect simultaneously using temp array
+        // Max possible enemies = all cached robots
+        int maxCount = robots.length;
+        if (maxCount == 0) return new RobotInfo[0];
+
+        RobotInfo[] temp = new RobotInfo[maxCount];
         int count = 0;
+
         for (RobotInfo r : robots) {
             if (r.getTeam() == enemy &&
                 (r.getType() == UnitType.BABY_RAT || r.getType() == UnitType.RAT_KING)) {
-                count++;
+                // Preserve original radius filter
+                if (myLocation.distanceSquaredTo(r.getLocation()) <= radiusSq) {
+                    temp[count++] = r;
+                }
             }
         }
 
-        // Create result array
+        // Copy to right-sized array
         RobotInfo[] enemies = new RobotInfo[count];
-        int idx = 0;
-        for (RobotInfo r : robots) {
-            if (r.getTeam() == enemy &&
-                (r.getType() == UnitType.BABY_RAT || r.getType() == UnitType.RAT_KING)) {
-                enemies[idx++] = r;
-            }
-        }
-
+        System.arraycopy(temp, 0, enemies, 0, count);
         return enemies;
     }
 

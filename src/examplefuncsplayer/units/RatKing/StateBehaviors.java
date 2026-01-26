@@ -169,10 +169,15 @@ public class StateBehaviors {
             // Index not set up yet
         }
 
-        // Fallback heuristic
-        RobotInfo[] nearbyRobots = rc.senseNearbyRobots();
-        Team myTeam = rc.getTeam();
-        Team enemyTeam = myTeam.opponent();
+        // Fallback heuristic - use cached robots to save bytecode
+        RobotInfo[] nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        if (nearbyRobots == null) {
+            // Cache not initialized, initialize it
+            Sensing.initializeSensingCache(rc);
+            nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        }
+
+        Team enemyTeam = rc.getTeam().opponent();
 
         for (RobotInfo robot : nearbyRobots) {
             if (robot.getTeam() == enemyTeam &&
@@ -190,17 +195,34 @@ public class StateBehaviors {
     }
 
     public static void kingCounterAttack(RobotController rc) throws GameActionException {
-        RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
+        // Use cached robots to save bytecode
+        RobotInfo[] nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        if (nearbyRobots == null) {
+            Sensing.initializeSensingCache(rc);
+            nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        }
 
-        for (RobotInfo enemy : enemies) {
-            if (enemy.getType() == UnitType.BABY_RAT || enemy.getType() == UnitType.RAT_KING) {
-                MapLocation enemyLoc = enemy.getLocation();
-                int cheeseBoost = Math.min(KING_ATTACK_CHEESE_BOOST, rc.getGlobalCheese() / 10);
+        MapLocation kingLoc = KingRuntimeState.cachedKingLocation;
+        if (kingLoc == null) {
+            kingLoc = rc.getLocation();
+        }
 
-                if (rc.canAttack(enemyLoc, cheeseBoost)) {
-                    rc.attack(enemyLoc, cheeseBoost);
-                    return;
-                }
+        Team enemyTeam = rc.getTeam().opponent();
+        final int ATTACK_RADIUS_SQ = 8;  // Original radius
+
+        for (RobotInfo enemy : nearbyRobots) {
+            if (enemy.getTeam() != enemyTeam) continue;
+            if (enemy.getType() != UnitType.BABY_RAT && enemy.getType() != UnitType.RAT_KING) continue;
+
+            // Preserve original radius filter
+            if (kingLoc.distanceSquaredTo(enemy.getLocation()) > ATTACK_RADIUS_SQ) continue;
+
+            MapLocation enemyLoc = enemy.getLocation();
+            int cheeseBoost = Math.min(KING_ATTACK_CHEESE_BOOST, rc.getGlobalCheese() / 10);
+
+            if (rc.canAttack(enemyLoc, cheeseBoost)) {
+                rc.attack(enemyLoc, cheeseBoost);
+                return;
             }
         }
     }

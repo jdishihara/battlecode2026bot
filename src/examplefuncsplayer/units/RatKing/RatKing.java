@@ -19,6 +19,9 @@ public class RatKing {
      * Main per-turn entrypoint for the Rat King.
      */
     public static void run(RobotController rc, int turnCount) throws GameActionException {
+        // ===== INITIALIZE SENSING CACHE (once per turn, saves ~3000+ bytecodes) =====
+        Sensing.initializeSensingCache(rc);
+
         MapLocation myLocation = rc.getLocation();
         int globalCheese = rc.getGlobalCheese();
         int spawnCost = rc.getCurrentRatCost();

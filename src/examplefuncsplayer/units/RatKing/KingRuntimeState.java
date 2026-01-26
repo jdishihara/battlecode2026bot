@@ -1,6 +1,7 @@
 package examplefuncsplayer.units.RatKing;
 
 import battlecode.common.MapLocation;
+import battlecode.common.RobotInfo;
 
 /**
  * Runtime state for the Rat King.
@@ -27,4 +28,9 @@ public class KingRuntimeState {
     // Arrays indexed by (senderID & 127) to pair X and Y squeaks
     public static final int[] pendingMineX = new int[KingConstants.SENDER_SLOTS];      // 0 = unset, otherwise x+1
     public static final int[] pendingMineRound = new int[KingConstants.SENDER_SLOTS];  // Round the X was received
+
+    // === SENSING CACHE (refreshed once per turn to save bytecode) ===
+    public static RobotInfo[] cachedNearbyRobots = null;
+    public static MapLocation cachedKingLocation = null;
+    public static int cacheRound = -1;
 }

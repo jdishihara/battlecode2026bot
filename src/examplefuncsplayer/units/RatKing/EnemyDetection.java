@@ -89,13 +89,30 @@ public class EnemyDetection {
 
     /**
      * Find enemy rat king within vision range.
+     * Uses cached robot data to save bytecode.
      */
     public static RobotInfo findEnemyKing(RobotController rc) throws GameActionException {
-        RobotInfo[] nearby = rc.senseNearbyRobots(25, rc.getTeam().opponent());
+        // Use cached robots to save bytecode
+        RobotInfo[] nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        if (nearbyRobots == null) {
+            Sensing.initializeSensingCache(rc);
+            nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        }
 
-        for (RobotInfo robot : nearby) {
-            if (robot.getType() == UnitType.RAT_KING) {
-                return robot;
+        MapLocation kingLoc = KingRuntimeState.cachedKingLocation;
+        if (kingLoc == null) {
+            kingLoc = rc.getLocation();
+        }
+
+        Team enemyTeam = rc.getTeam().opponent();
+        final int VISION_RADIUS_SQ = 25;  // Original radius
+
+        for (RobotInfo robot : nearbyRobots) {
+            if (robot.getTeam() == enemyTeam && robot.getType() == UnitType.RAT_KING) {
+                // Preserve original radius filter
+                if (kingLoc.distanceSquaredTo(robot.getLocation()) <= VISION_RADIUS_SQ) {
+                    return robot;
+                }
             }
         }
         return null;

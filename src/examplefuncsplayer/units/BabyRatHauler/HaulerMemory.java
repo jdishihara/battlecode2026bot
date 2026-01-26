@@ -84,9 +84,25 @@ public class HaulerMemory {
         public boolean isDefending = false;              // Whether we're actively in defense mode
         public int lastDefenseSqueak = -100;             // Last round we squeaked for defense help
 
+        // ===== STICKY TARGETING (focus fire commitment) =====
+        public int stickyTargetId = -1;                  // Robot ID of committed target (-1 = none)
+        public int stickyTargetRoundsRemaining = 0;      // Countdown until commitment expires
+        public MapLocation stickyTargetLastKnownLoc = null; // Last known position for chasing
+
+        // ===== SQUEAK CHAIN RELAY =====
+        public int lastReceivedDefenseSqueakRound = -100; // Round we last received a defense squeak
+        public boolean receivedFreshSqueak = false;       // Flag: received squeak this turn
+
         // ===== OFFENSIVE TRAP STATE =====
         public int lastOffensiveTrapRound = -100;        // Round when we last placed an offensive trap
         public int offensiveTrapCount = 0;               // Offensive traps this hauler has placed
+
+        // ===== RATNAPPING STATE =====
+        public boolean isCarryingEnemy = false;          // Whether we're currently carrying an enemy
+        public int carryStartRound = -1;                 // Round when we started carrying
+        public int ratnappedEnemyId = -1;                // ID of the enemy we're carrying
+        public MapLocation ratnappedFrom = null;         // Where we ratnapped them from (for tracking)
+        public int lastRatnapAttemptRound = -100;        // Cooldown to avoid spam attempts
 
         public final Random rng;
 

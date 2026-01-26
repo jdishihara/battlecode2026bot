@@ -5,7 +5,7 @@ import battlecode.common.Direction;
 public final class Constants {
 
     // ===== DEBUG =====
-    public static final boolean DEBUG = false;
+    public static final boolean DEBUG = true;
 
     // ===== GENERAL GAMEPLAY =====
     public static final int INITIAL_RATS = 10;
@@ -40,10 +40,10 @@ public final class Constants {
     public static final int KING_ATTACK_CHEESE_BOOST = 50;
 
     // ===== HAULER DEFENSE SYSTEM =====
-    public static final int HAULER_DEFEND_RADIUS = 49;          // dist² to king to trigger defense mode (~7 tiles)
-    public static final int HAULER_DEFEND_RADIUS_SQ = 49;       // 7 tiles - haulers defend within this range of king
+    public static final int HAULER_DEFEND_RADIUS = 400;         // dist² to king to trigger defense mode (~20 tiles)
+    public static final int HAULER_DEFEND_RADIUS_SQ = 400;      // 20 tiles - haulers defend within this range of king
     public static final int HAULER_DEFEND_ENGAGE_RADIUS = 25;   // dist² to engage enemies (~5 tiles)
-    public static final int KING_THREAT_RADIUS = 49;            // dist² from king to consider enemy a threat (~7 tiles)
+    public static final int KING_THREAT_RADIUS = 400;           // dist² from king to consider enemy a threat (~20 tiles)
     public static final int HAULER_DEFENSE_BITE_BOOST = 25;     // Cheese to spend on defensive bites (increased)
     public static final int HAULER_TRAP_COOLDOWN = 10;          // Rounds between trap placements (faster)
     public static final int HAULER_MAX_DEFENSE_TRAPS = 12;      // Max traps a single hauler will place (increased)
@@ -53,6 +53,13 @@ public final class Constants {
     public static final int MIN_ALLIES_FOR_DEFENSE = 2;         // Minimum allies needed to engage enemies
     public static final int OFFENSIVE_TRAP_CHEESE_THRESHOLD = 40; // Min cheese reserve for offensive traps (lowered)
     public static final int HAULER_SPAWN_INTERVAL = 14;         // Slower spawn rate for ongoing hauler spawns
+
+    // ===== SQUEAK CHAIN DEFENSE SYSTEM =====
+    public static final int STICKY_TARGET_ROUNDS = 10;          // Stay committed to target for N rounds
+    public static final int SQUEAK_FRESHNESS_LIMIT = 2;         // Ignore squeaks older than 2 rounds
+    public static final int RELAY_SQUEAK_COOLDOWN = 1;          // Min rounds between relay squeaks (fast chain)
+    public static final int CLOSER_THREAT_OVERRIDE_DIST_SQ = 9; // Override sticky if new threat within 3 tiles of king
+    public static final int DEFENSE_CONVERGE_RADIUS_SQ = 400;   // Rats within 20 tiles will converge to defend
 
     // King mobility constants
     public static final int KING_KITE_SAFE_DIST_SQ = 144;      // 12 tiles - maintain this distance from threats

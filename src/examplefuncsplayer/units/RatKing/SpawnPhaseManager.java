@@ -64,13 +64,21 @@ public class SpawnPhaseManager {
 
     /**
      * Count our baby rats visible in sensor range.
+     * Uses cached robot data to save bytecode.
      */
     private static int countOurBabyRats(RobotController rc) throws GameActionException {
-        RobotInfo[] allies = rc.senseNearbyRobots(-1, rc.getTeam());
+        // Use cached robots to save bytecode
+        RobotInfo[] nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        if (nearbyRobots == null) {
+            Sensing.initializeSensingCache(rc);
+            nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        }
+
+        Team myTeam = rc.getTeam();
         int count = 0;
 
-        for (RobotInfo ally : allies) {
-            if (ally.getType() == UnitType.BABY_RAT) {
+        for (RobotInfo robot : nearbyRobots) {
+            if (robot.getTeam() == myTeam && robot.getType() == UnitType.BABY_RAT) {
                 count++;
             }
         }
@@ -80,14 +88,21 @@ public class SpawnPhaseManager {
 
     /**
      * Estimate enemy rat count from sightings and shared array data.
+     * Uses cached robot data to save bytecode.
      */
     private static int estimateEnemyRatCount(RobotController rc) throws GameActionException {
+        // Use cached robots to save bytecode
+        RobotInfo[] nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        if (nearbyRobots == null) {
+            Sensing.initializeSensingCache(rc);
+            nearbyRobots = KingRuntimeState.cachedNearbyRobots;
+        }
+
         Team enemyTeam = rc.getTeam().opponent();
-        RobotInfo[] enemies = rc.senseNearbyRobots(-1, enemyTeam);
         int count = 0;
 
-        for (RobotInfo enemy : enemies) {
-            if (enemy.getType() == UnitType.BABY_RAT) {
+        for (RobotInfo robot : nearbyRobots) {
+            if (robot.getTeam() == enemyTeam && robot.getType() == UnitType.BABY_RAT) {
                 count++;
             }
         }

@@ -12,7 +12,6 @@ import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatLevel;
 
 import static examplefuncsplayer.units.BabyRatHauler.HaulerMemory.*;
 import static examplefuncsplayer.units.BabyRatHauler.HaulerMining.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerThreat.*;
 import static examplefuncsplayer.units.BabyRatHauler.HaulerMovement.*;
 import static examplefuncsplayer.units.BabyRatHauler.HaulerNavigation.*;
 import static examplefuncsplayer.units.BabyRatHauler.HaulerSensing.*;
@@ -71,15 +70,55 @@ public class BabyRatHauler {
         // ===== COMPUTE THREAT (CATS + ENEMY RATS + KING DANGER) ONCE PER TURN =====
         ThreatInfo threat = computeDefenseThreat(rc, m);
 
+        // ===== HANDLE CARRYING STATE (from ratnapping) =====
+        // If we're carrying an enemy, handle that before any FSM logic
+        if (rc.getCarrying() != null) {
+            boolean isCatPanic = false;
+
+            // Check if we're in cat panic specifically (not just enemy rat panic)
+            if (threat.level == ThreatLevel.PANIC && threat.source != null) {
+                if (rc.canSenseLocation(threat.source)) {
+                    RobotInfo threatRobot = rc.senseRobotAtLocation(threat.source);
+                    if (threatRobot != null && threatRobot.getType() == UnitType.CAT) {
+                        isCatPanic = true;
+                        // Drop enemy and flee from cat
+                        Direction away = threat.source.directionTo(rc.getLocation());
+                        if (rc.canDropRat(away)) {
+                            rc.dropRat(away);
+                        }
+                        clearRatnapState(m);
+                        m.currentState = RatState.FLEE;
+                        // Continue to FSM to handle flee
+                    }
+                }
+            }
+
+            // If NOT cat panic, handle carrying normally (even if in enemy rat panic)
+            // We keep carrying because the carried enemy can't hurt us and we can use them!
+            if (!isCatPanic && rc.getCarrying() != null) {
+                handleCarryingEnemy(rc, m);
+                if (DEBUG) rc.setIndicatorString("CARRYING ENEMY | Turns:" + (rc.getRoundNum() - m.carryStartRound));
+                return; // Handled carrying, done for this turn
+            }
+        } else if (m.isCarryingEnemy) {
+            // We were carrying but not anymore (auto-dropped or threw)
+            clearRatnapState(m);
+        }
+
         // ===== CHECK FOR DEFENSE SQUEAKS FROM ALLIES =====
         // Respond to focus fire coordination - all nearby haulers attack the same target
         MapLocation squeakedTarget = checkDefenseSqueaks(rc, m);
         if (squeakedTarget != null && shouldRespondToDefense(rc, m, squeakedTarget)) {
             // Another rat spotted an enemy near our king - join the defense!
-            if (m.currentState != RatState.DEFEND) {
+            boolean justEnteredDefend = (m.currentState != RatState.DEFEND);
+            if (justEnteredDefend) {
                 m.previousState = m.currentState;
                 m.currentState = RatState.DEFEND;
                 m.isDefending = true;
+
+                // RELAY SQUEAK: Extend the chain to reach more allies!
+                // This helps rats further away hear about the threat faster
+                squeakEnemyTarget(rc, m, squeakedTarget);
             }
             m.currentDefenseTarget = squeakedTarget;
             // Update threat info with the squeaked target
@@ -96,8 +135,8 @@ public class BabyRatHauler {
                 m.currentState = RatState.DEFEND;
                 m.isDefending = true;
                 m.moveAwayCounter = 0;
-            } else if (threat.level == ThreatLevel.PANIC || threat.level == ThreatLevel.BLOCKING) {
-                // Cat or immediate danger - flee
+            } else if ((threat.level == ThreatLevel.PANIC || threat.level == ThreatLevel.BLOCKING) && threat.threatIsCat) {
+                // Cat danger only - flee from cats, NOT enemy rats
                 m.currentState = RatState.FLEE;
                 m.moveAwayCounter = 0;
             } else {
@@ -117,51 +156,59 @@ public class BabyRatHauler {
         }
 
         // ===== FSM TRANSITIONS BASED ON THREAT =====
+        // CRITICAL: We NEVER flee from enemy rats - only from cats!
+        // Enemy rats should trigger DEFEND (if near king) or be ignored (continue task)
+
         // Priority 1: KING_DANGER triggers DEFEND mode (highest priority)
         if (threat.level == ThreatLevel.KING_DANGER && shouldDefend(rc, m, threat)) {
             if (m.currentState != RatState.DEFEND) {
                 m.previousState = m.currentState;
                 m.currentState = RatState.DEFEND;
                 m.isDefending = true;
+
+                // IMMEDIATE SQUEAK: Alert nearby rats to converge on the enemy!
+                // This speeds up the squeak chain for faster swarming
+                MapLocation alertTarget = threat.priorityTarget != null ? threat.priorityTarget : threat.source;
+                if (alertTarget != null) {
+                    squeakEnemyTarget(rc, m, alertTarget);
+                }
             }
         }
         // Priority 2: Exit DEFEND when no more enemies near king
         else if (m.currentState == RatState.DEFEND && threat.enemiesNearKing == 0) {
-            m.currentState = m.previousState;
-            m.isDefending = false;
-            m.currentDefenseTarget = null;
-        }
-        // Priority 3: CAT PANIC triggers FLEE (even defenders flee from cats in panic range)
-        else if (threat.level == ThreatLevel.PANIC) {
-            if (m.currentState != RatState.FLEE && m.currentState != RatState.DEFEND) {
-                m.previousState = m.currentState;
-                m.currentState = RatState.FLEE;
-            }
-            // Defenders in panic range also flee temporarily
-            if (m.currentState == RatState.DEFEND && threat.source != null) {
-                // Check if panic is from cat (not enemy rat) - only then flee
-                RobotInfo[] panicNearby = rc.senseNearbyRobots(9);
-                boolean catPanic = false;
-                for (RobotInfo r : panicNearby) {
-                    if (r.getType() == UnitType.CAT) {
-                        catPanic = true;
-                        break;
-                    }
-                }
-                if (catPanic) {
-                    m.currentState = RatState.FLEE;
+            // Only exit if sticky target is also gone
+            boolean stickyStillValid = false;
+            if (m.stickyTargetId != -1 && m.stickyTargetLastKnownLoc != null) {
+                if (rc.canSenseLocation(m.stickyTargetLastKnownLoc)) {
+                    RobotInfo robot = rc.senseRobotAtLocation(m.stickyTargetLastKnownLoc);
+                    stickyStillValid = (robot != null && robot.getTeam() != rc.getTeam());
                 }
             }
+            if (!stickyStillValid) {
+                m.currentState = m.previousState;
+                m.isDefending = false;
+                m.currentDefenseTarget = null;
+                clearStickyTarget(m);
+            }
         }
-        // Priority 4: Other threats trigger FLEE (but not if defending)
-        else if (threat.level != ThreatLevel.NONE && threat.level != ThreatLevel.KING_DANGER) {
-            if (m.currentState != RatState.FLEE && m.currentState != RatState.DEFEND) {
+        // Priority 3: CAT threats trigger FLEE (ONLY cats, NEVER enemy rats)
+        // Defenders also flee from cats in panic range
+        else if (threat.level == ThreatLevel.PANIC && threat.threatIsCat) {
+            // Only flee from cats - this is a cat panic
+            if (m.currentState != RatState.FLEE) {
                 m.previousState = m.currentState;
                 m.currentState = RatState.FLEE;
             }
         }
-        // Priority 5: Exit FLEE when threat clears
-        else if (m.currentState == RatState.FLEE && threat.level == ThreatLevel.NONE) {
+        // Priority 4: Other CAT threats (NEAR/BLOCKING) trigger FLEE - but ONLY if cat, not enemy rat
+        else if (threat.level != ThreatLevel.NONE && threat.level != ThreatLevel.KING_DANGER && threat.threatIsCat) {
+            if (m.currentState != RatState.FLEE && m.currentState != RatState.DEFEND) {
+                m.previousState = m.currentState;
+                m.currentState = RatState.FLEE;
+            }
+        }
+        // Priority 5: Exit FLEE when threat clears OR when threat is only enemy rats (not cats)
+        else if (m.currentState == RatState.FLEE && (threat.level == ThreatLevel.NONE || !threat.threatIsCat)) {
             m.currentState = m.previousState;
         }
 
@@ -412,8 +459,9 @@ public class BabyRatHauler {
             return;
         }
 
-        // Safety check: don't walk into danger (cats OR enemy rats)
-        if (threat.level == ThreatLevel.PANIC || threat.level == ThreatLevel.BLOCKING) {
+        // Safety check: only flee from CATS, not enemy rats
+        // We fight enemy rats, we don't run from them
+        if ((threat.level == ThreatLevel.PANIC || threat.level == ThreatLevel.BLOCKING) && threat.threatIsCat) {
             m.currentState = RatState.FLEE;
             return;
         }
@@ -465,8 +513,9 @@ public class BabyRatHauler {
             return;
         }
 
-        // Safety check: don't walk into danger (cats OR enemy rats)
-        if (threat.level == ThreatLevel.PANIC || threat.level == ThreatLevel.BLOCKING) {
+        // Safety check: only flee from CATS, not enemy rats
+        // We fight enemy rats, we don't run from them
+        if ((threat.level == ThreatLevel.PANIC || threat.level == ThreatLevel.BLOCKING) && threat.threatIsCat) {
             m.currentState = RatState.FLEE;
             return;
         }
@@ -556,68 +605,80 @@ public class BabyRatHauler {
     /**
      * DEFEND state: Protect the king from enemy rats.
      *
-     * Combat priorities:
-     * 1. Attack LOW HP enemies first (quick kills)
-     * 2. Focus fire on shared target (coordination)
-     * 3. Place traps between enemies and king
-     * 4. Squeak for backup when outnumbered
+     * PRIORITY ORDER:
+     * 1. Handle carrying enemy (if we ratnapped someone)
+     * 2. Try to RATNAP an enemy (completely disables them!)
+     * 3. Attack (with focus fire coordination)
+     * 4. Place traps
+     * 5. Move to engage
+     *
+     * SQUEAK CHAIN DEFENSE SYSTEM:
+     * - Deterministic target priority: closest to king → lowest HP → lowest robot ID
+     * - Sticky targeting: stay on target for N rounds to prevent thrashing
+     * - Selective relay: extend squeak chain to reach more allies
+     * - All nearby rats converge regardless of distance from king
      */
     static void runDefend(RobotController rc, Mem m, ThreatInfo threat) throws GameActionException {
         MapLocation here = rc.getLocation();
 
-        // If no enemies near king anymore, exit defend
+        // ===== PRIORITY 0: HANDLE IF WE'RE CARRYING AN ENEMY =====
+        // If we already ratnapped someone, handle that first
+        if (rc.getCarrying() != null) {
+            handleCarryingEnemy(rc, m);
+            if (DEBUG) rc.setIndicatorString("DEFEND CARRYING | Turns:" + (rc.getRoundNum() - m.carryStartRound));
+            return;
+        } else if (m.isCarryingEnemy) {
+            // We were carrying but auto-dropped - clear state
+            clearRatnapState(m);
+        }
+
+        // If no enemies near king anymore, check if we should exit defense
         if (threat.enemiesNearKing == 0) {
-            // Also check if our tracked target still exists
-            boolean targetStillExists = false;
-            if (m.currentDefenseTarget != null && rc.canSenseLocation(m.currentDefenseTarget)) {
-                RobotInfo robot = rc.senseRobotAtLocation(m.currentDefenseTarget);
-                if (robot != null && robot.getTeam() != rc.getTeam()) {
-                    targetStillExists = true;
+            // Check if our sticky target still exists
+            boolean targetStillValid = false;
+            if (m.stickyTargetId != -1 && m.stickyTargetLastKnownLoc != null) {
+                if (rc.canSenseLocation(m.stickyTargetLastKnownLoc)) {
+                    RobotInfo robot = rc.senseRobotAtLocation(m.stickyTargetLastKnownLoc);
+                    if (robot != null && robot.getTeam() != rc.getTeam()) {
+                        targetStillValid = true;
+                    }
+                } else {
+                    // Can't sense - if we're close, keep chasing briefly
+                    int dist = here.distanceSquaredTo(m.stickyTargetLastKnownLoc);
+                    targetStillValid = (dist <= 36 && m.stickyTargetRoundsRemaining > 0);
                 }
             }
 
-            if (!targetStillExists) {
+            if (!targetStillValid) {
+                // Exit defense mode
                 m.currentState = m.previousState;
                 m.isDefending = false;
                 m.currentDefenseTarget = null;
+                clearStickyTarget(m);
                 return;
             }
         }
 
-        // ===== 1. SELECT TARGET (FOCUS FIRE) =====
-        // Priority: Use existing target if valid, otherwise find new one
-        MapLocation target = null;
-
-        // First, check if our current target is still valid
-        if (m.currentDefenseTarget != null) {
-            if (rc.canSenseLocation(m.currentDefenseTarget)) {
-                RobotInfo robot = rc.senseRobotAtLocation(m.currentDefenseTarget);
-                if (robot != null && robot.getTeam() != rc.getTeam()) {
-                    target = m.currentDefenseTarget;  // Target still valid
-                } else {
-                    m.currentDefenseTarget = null;  // Target died or moved
-                }
-            } else {
-                // Can't sense the location - move toward it
-                target = m.currentDefenseTarget;
-            }
-        }
-
-        // If no valid target, use focus fire selection
-        if (target == null) {
-            target = selectFocusFireTarget(rc, m);
-        }
+        // ===== 1. SELECT TARGET (DETERMINISTIC FOCUS FIRE with STICKY TARGETING) =====
+        // This uses the new priority: closest to king → lowest HP → lowest robot ID
+        // Sticky targeting prevents thrashing between targets
+        MapLocation target = selectFocusFireTarget(rc, m);
 
         // Fallback to old method if focus fire found nothing
         if (target == null) {
             target = selectDefenseTarget(rc, m, threat);
         }
 
-        // ===== 2. SQUEAK FOR BACKUP =====
-        // Always squeak target location for coordination when we have one
-        int alliesNearby = countNearbyAllies(rc, HAULER_DEFEND_RADIUS);
+        // ===== 2. RELAY SQUEAK (extend chain to reach more allies) =====
+        // Only relay if we received a fresh squeak and cooldown allows
         if (target != null) {
-            // Squeak target for focus fire (squeakEnemyTarget has its own cooldown)
+            tryRelaySqueak(rc, m, target);
+        }
+
+        // ===== 3. SQUEAK FOR BACKUP =====
+        int alliesNearby = countNearbyAllies(rc, HAULER_DEFEND_RADIUS);
+        if (target != null && !m.receivedFreshSqueak) {
+            // If we found target ourselves (not from squeak), broadcast it
             squeakEnemyTarget(rc, m, target);
         }
         // Also squeak for general backup if outnumbered
@@ -625,7 +686,29 @@ public class BabyRatHauler {
             squeakForDefense(rc, m);
         }
 
-        // ===== 3. TRY TO ATTACK =====
+        // ===== 4. TRY TO RATNAP (HIGHEST COMBAT PRIORITY!) =====
+        // Ratnapping completely disables an enemy for up to 10 turns!
+        // This is MORE valuable than a single bite (10-20 dmg vs 10 turns of no enemy actions)
+        if (rc.getActionCooldownTurns() < 10) {
+            // First check if our target is ratnapable
+            if (target != null && here.isAdjacentTo(target)) {
+                if (tryDefensiveRatnap(rc, m, target)) {
+                    if (DEBUG) rc.setIndicatorString("DEFEND RATNAPPED TARGET!");
+                    return; // Successfully ratnapped, will handle carrying next turn
+                }
+            }
+
+            // Also check for other ratnapable enemies nearby (e.g., flankers facing away)
+            MapLocation ratnapTarget = findRatnapTarget(rc, m);
+            if (ratnapTarget != null && !ratnapTarget.equals(target)) {
+                if (tryDefensiveRatnap(rc, m, ratnapTarget)) {
+                    if (DEBUG) rc.setIndicatorString("DEFEND RATNAPPED FLANKER!");
+                    return;
+                }
+            }
+        }
+
+        // ===== 5. TRY TO ATTACK =====
         boolean attacked = false;
         if (target != null) {
             int distToTargetSq = here.distanceSquaredTo(target);
@@ -636,24 +719,22 @@ public class BabyRatHauler {
             }
         }
 
-        // ===== 3.5 OFFENSIVE TRAP - CUT OFF RETREAT =====
-        // If adjacent or very close to target, try to trap their escape route
-        // This is extremely efficient: 50 damage + 2 turn stun for 30 cheese
+        // ===== 6. OFFENSIVE TRAP - CUT OFF RETREAT =====
+        // Traps deal 50 damage + 2 turn stun for only 30 cheese
         // Trap + 2 bites = 70 damage = dead rat
         if (!attacked && target != null && rc.getActionCooldownTurns() < 10) {
             int distToTarget = here.distanceSquaredTo(target);
-            // If close enough to place trap near enemy
             if (distToTarget <= 5) {
                 tryOffensiveTrap(rc, m, target);
             }
         }
 
-        // ===== 4. PLACE DEFENSIVE TRAP =====
+        // ===== 7. PLACE DEFENSIVE TRAP =====
         if (!attacked && rc.getActionCooldownTurns() < 10) {
             tryPlaceDefensiveTrap(rc, m, threat);
         }
 
-        // ===== 5. MOVE TOWARD TARGET OR PATROL NEAR KING =====
+        // ===== 8. MOVE TOWARD TARGET OR PATROL NEAR KING =====
         if (target != null) {
             int distToTargetSq = here.distanceSquaredTo(target);
 
@@ -673,8 +754,8 @@ public class BabyRatHauler {
         else if (m.kingLocation != null) {
             int distToKingSq = here.distanceSquaredTo(m.kingLocation);
 
-            // Stay close to king
-            if (distToKingSq > 25) {
+            // Move toward king if far
+            if (distToKingSq > 36) {
                 moveTowardTarget(rc, m, m.kingLocation);
             }
             // Rotate to scan for threats
@@ -687,8 +768,10 @@ public class BabyRatHauler {
             }
         }
 
-        if (DEBUG) rc.setIndicatorString("DEFEND | Enemies:" + threat.enemiesNearKing + " | Target:" +
-                (target != null ? target.toString() : "none") + " | Allies:" + alliesNearby);
+        // Debug indicator
+        String stickyStr = m.stickyTargetId != -1 ? "S:" + m.stickyTargetRoundsRemaining : "-";
+        if (DEBUG) rc.setIndicatorString("DEFEND | E:" + threat.enemiesNearKing + " | " + stickyStr +
+                " | Tgt:" + (target != null ? target.toString() : "none") + " | A:" + alliesNearby);
     }
 
     /**
