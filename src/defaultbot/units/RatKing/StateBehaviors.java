@@ -2,8 +2,8 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.config.Constants.*;
-import static examplefuncsplayer.config.Shared.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.config.Shared.*;
 
 /**
  * State-based behaviors for the Rat King.

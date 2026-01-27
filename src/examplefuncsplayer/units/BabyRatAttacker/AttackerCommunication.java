@@ -8,6 +8,7 @@ import examplefuncsplayer.units.BabyRatAttacker.AttackerState.AttackStateEnum;
 import static examplefuncsplayer.config.Constants.*;
 import static examplefuncsplayer.config.Shared.*;
 import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerTargeting.*;
 
 /**
  * Squeak communication, global alerts, and message processing for attacker rats.
@@ -144,6 +145,52 @@ public class AttackerCommunication {
     }
 
     /**
+     * Squeak focus fire target to coordinate attacks.
+     * Called when we find a high-priority target (low HP, near our king, etc.)
+     *
+     * Triggers when:
+     * - We have a valid focus target (from selectPriorityTarget)
+     * - Target is low HP or being attacked
+     * - No cat within hearing range
+     * - Cooldown has expired
+     *
+     * @param target The priority target to broadcast
+     * @param nearestCatDistSq Distance to nearest cat (for safety check)
+     * @return true if we broadcasted a focus target squeak
+     */
+    public static boolean maybeSqueakFocusTarget(RobotController rc, Mem m, int roundNum,
+                                                  RobotInfo target, int nearestCatDistSq)
+            throws GameActionException {
+        if (target == null) return false;
+
+        // Cooldown check
+        if (roundNum - m.lastFocusSqueakRound < FOCUS_SQUEAK_COOLDOWN) return false;
+
+        // Safety check: don't squeak if cat is in hearing range
+        if (nearestCatDistSq <= CAT_HEARING_DIST_SQ) return false;
+
+        // Only broadcast high-priority targets (low HP or critical HP)
+        int targetHP = target.getHealth();
+        boolean isHighPriority = targetHP <= FOCUS_LOW_HP_THRESHOLD;
+
+        if (!isHighPriority) return false;
+
+        // Broadcast the focus target location
+        MapLocation targetLoc = target.getLocation();
+        int encodedMsg = encodeMsg(MSG_ENEMY_TARGET, targetLoc.x, targetLoc.y);
+        rc.squeak(encodedMsg);
+        m.lastFocusSqueakRound = roundNum;
+
+        // Update our own focus target
+        m.focusTargetLoc = targetLoc;
+        m.focusTargetHP = targetHP;
+        m.focusTargetID = target.getID();
+        m.focusTargetRound = roundNum;
+
+        return true;
+    }
+
+    /**
      * Process incoming squeak messages from nearby rats.
      * Handles formation messages, help requests, cat warnings, and legacy squeaks.
      *
@@ -232,6 +279,37 @@ public class AttackerCommunication {
                     // Set seen round slightly in the past so direct sightings take priority
                     m.lastCatSeenRound = roundNum - 1;
                     m.adoptedCatLoc = true;  // Flag for debug indicator
+                }
+                continue;
+            }
+
+            if (msgType == MSG_ENEMY_TARGET) {
+                // Decode focus fire target location from message
+                int targetX = decodeX(content);
+                int targetY = decodeY(content);
+                MapLocation targetLoc = new MapLocation(targetX, targetY);
+
+                // Only respond if we're close enough to help
+                int distToTarget = here.distanceSquaredTo(targetLoc);
+                if (distToTarget > FOCUS_RESPONSE_DIST_SQ) continue;
+
+                // Check if this is a newer/better target than what we have
+                int roundsSinceOurTarget = roundNum - m.focusTargetRound;
+                boolean shouldAdopt = false;
+
+                if (m.focusTargetLoc == null || roundsSinceOurTarget > FOCUS_FIRE_TTL) {
+                    // No current target or target expired - adopt new one
+                    shouldAdopt = true;
+                } else if (distToTarget < here.distanceSquaredTo(m.focusTargetLoc)) {
+                    // New target is closer - adopt it
+                    shouldAdopt = true;
+                }
+
+                if (shouldAdopt) {
+                    m.focusTargetLoc = targetLoc;
+                    m.focusTargetRound = roundNum;
+                    m.focusTargetHP = -1;  // Unknown HP, will verify on sight
+                    m.focusTargetID = -1;  // Unknown ID, will verify on sight
                 }
                 continue;
             }

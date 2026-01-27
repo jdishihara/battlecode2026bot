@@ -194,6 +194,36 @@ public class Movement {
 
     public static void trySpawnRat(RobotController rc) throws GameActionException {
         MapLocation myLocation = rc.getLocation();
+        int roundNum = rc.getRoundNum();
+        int globalCheese = rc.getGlobalCheese();
+
+        // Check if we should trigger a new attacker wave
+        int waveRemaining = rc.readSharedArray(ATTACKER_WAVE_REMAINING);
+        int lastWaveRound = rc.readSharedArray(LAST_ATTACKER_WAVE_ROUND);
+        int totalHaulers = rc.readSharedArray(TOTAL_HAULERS_SPAWNED);
+
+        // Calculate rounds since last wave (handle mod 1000 wrap-around)
+        int roundsSinceLastWave = (lastWaveRound == 0) ? ATTACKER_WAVE_COOLDOWN + 1 :
+            ((roundNum - lastWaveRound + 1000) % 1000);
+        if (roundsSinceLastWave > 500) roundsSinceLastWave = ATTACKER_WAVE_COOLDOWN + 1;
+
+        // Trigger new wave if conditions are met and no wave is active
+        if (waveRemaining == 0 &&
+            roundNum >= ATTACKER_WAVE_MIN_ROUND &&
+            globalCheese >= ATTACKER_WAVE_MIN_CHEESE &&
+            totalHaulers >= ATTACKER_WAVE_MIN_HAULERS &&
+            roundsSinceLastWave >= ATTACKER_WAVE_COOLDOWN) {
+
+            waveRemaining = ATTACKER_WAVE_SIZE;
+            rc.writeSharedArray(ATTACKER_WAVE_REMAINING, waveRemaining);
+            rc.writeSharedArray(LAST_ATTACKER_WAVE_ROUND, roundNum % 1000);
+        }
+
+        // Determine role for next spawn
+        boolean spawnAttacker = (waveRemaining > 0);
+
+        // Set role in shared array BEFORE spawning
+        rc.writeSharedArray(NEXT_SPAWN_ROLE, spawnAttacker ? 1 : 0);
 
         for (int dx = -2; dx <= 2; dx++) {
             for (int dy = -2; dy <= 2; dy++) {
@@ -202,6 +232,14 @@ public class Movement {
                     // Increment spawn count BEFORE spawning so baby rat can read it
                     int currentCount = rc.readSharedArray(SPAWN_COUNT_INDEX);
                     rc.writeSharedArray(SPAWN_COUNT_INDEX, currentCount + 1);
+
+                    // Update wave/hauler counters BEFORE spawning
+                    if (spawnAttacker) {
+                        rc.writeSharedArray(ATTACKER_WAVE_REMAINING, waveRemaining - 1);
+                    } else {
+                        rc.writeSharedArray(TOTAL_HAULERS_SPAWNED, totalHaulers + 1);
+                    }
+
                     rc.buildRat(spawnLoc);
                     return;
                 }

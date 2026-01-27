@@ -2,7 +2,7 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
+import static defaultbot.units.BabyRatAttacker.AttackerState.*;
 
 /**
  * Cat-aware navigation scoring and direction selection for attacker rats.

@@ -5,7 +5,7 @@ import battlecode.common.MapLocation;
 
 import java.util.Random;
 
-import examplefuncsplayer.units.BabyRatHauler.HaulerState.RatState;
+import defaultbot.units.BabyRatHauler.HaulerState.RatState;
 
 /**
  * Per-robot memory for hauler rats.

@@ -2,7 +2,7 @@ package defaultbot.units.BabyRatHauler;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
+import defaultbot.units.BabyRatHauler.HaulerMemory.Mem;
 
 /**
  * Mine assignment and reporting system for hauler rats.

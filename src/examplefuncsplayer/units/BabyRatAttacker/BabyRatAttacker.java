@@ -12,6 +12,8 @@ import static examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.mem;
 import static examplefuncsplayer.units.BabyRatAttacker.AttackerMovement.*;
 import static examplefuncsplayer.units.BabyRatAttacker.AttackerCommunication.*;
 import static examplefuncsplayer.units.BabyRatAttacker.AttackerFormation.*;
+import static examplefuncsplayer.units.BabyRatAttacker.AttackerTargeting.*;
+import examplefuncsplayer.units.KingUpgrade;
 
 /**
  * ATTACKER baby rat: CLUSTERED SYMMETRY SEARCH
@@ -67,6 +69,16 @@ public class BabyRatAttacker {
         int nearestCatAnyDistSq = Integer.MAX_VALUE;
         MapLocation nearestCatAnyLoc = null;
 
+        // Track all enemy baby rats for focus fire targeting
+        int enemyBabyRatCount = 0;
+        for (RobotInfo r : nearbyAll) {
+            if (r.getTeam() == enemyTeam && r.getType() == UnitType.BABY_RAT) {
+                enemyBabyRatCount++;
+            }
+        }
+        RobotInfo[] nearbyEnemyRats = new RobotInfo[enemyBabyRatCount];
+        int enemyIdx = 0;
+
         for (RobotInfo r : nearbyAll) {
             if (r.getType() == UnitType.CAT) {
                 int d = here.distanceSquaredTo(r.getLocation());
@@ -87,14 +99,23 @@ public class BabyRatAttacker {
                         nearestEnemyKingDistSq = d;
                         enemyKing = r;
                     }
-                } else if (r.getType() == UnitType.BABY_RAT && m.kingLocation != null) {
-                    int distToKing = r.getLocation().distanceSquaredTo(m.kingLocation);
-                    if (distToKing <= 100 && nearbyEnemyRatNearKing == null) {
-                        nearbyEnemyRatNearKing = r;
+                } else if (r.getType() == UnitType.BABY_RAT) {
+                    // Add to enemy rats array for targeting
+                    nearbyEnemyRats[enemyIdx++] = r;
+
+                    // Also check if near our king for guard mode
+                    if (m.kingLocation != null) {
+                        int distToKing = r.getLocation().distanceSquaredTo(m.kingLocation);
+                        if (distToKing <= 100 && nearbyEnemyRatNearKing == null) {
+                            nearbyEnemyRatNearKing = r;
+                        }
                     }
                 }
             }
         }
+
+        // Clear expired focus target
+        clearExpiredFocusTarget(m, roundNum);
 
         // Reset per-turn debug flags
         m.adoptedCatLoc = false;
@@ -153,6 +174,17 @@ public class BabyRatAttacker {
             }
         }
 
+        // ===== CHECK FOR RAT KING UPGRADE =====
+        // Only check every 10 turns to save bytecode
+        if (roundNum % 10 == 0) {
+            if (KingUpgrade.tryUpgradeToKing(rc)) {
+                // Successfully upgraded! This rat is now a king.
+                // The robot type has changed, so we should return.
+                // Next turn, RobotPlayer will route to RatKing.run()
+                return;
+            }
+        }
+
         // === READ GLOBAL ALERT (hive mind) ===
         readGlobalAlert(rc, m, roundNum);
 
@@ -206,6 +238,47 @@ public class BabyRatAttacker {
             return;
         }
 
+        // === FOCUS FIRE TARGETING ===
+        // Select priority target from nearby enemies (includes enemy king)
+        RobotInfo[] allEnemies = new RobotInfo[nearbyEnemyRats.length + (enemyKing != null ? 1 : 0)];
+        System.arraycopy(nearbyEnemyRats, 0, allEnemies, 0, nearbyEnemyRats.length);
+        if (enemyKing != null) {
+            allEnemies[nearbyEnemyRats.length] = enemyKing;
+        }
+
+        TargetResult priorityTarget = selectPriorityTarget(rc, m, allEnemies, roundNum);
+
+        // Broadcast focus target if appropriate (low HP target found)
+        if (priorityTarget != null && shouldBroadcastFocusTarget(m, priorityTarget, roundNum)) {
+            maybeSqueakFocusTarget(rc, m, roundNum, priorityTarget.target, nearestCatAnyDistSq);
+        }
+
+        // === ATTACK PRIORITY TARGET IF ADJACENT ===
+        if (priorityTarget != null && rc.getActionCooldownTurns() < 10) {
+            MapLocation targetLoc = priorityTarget.target.getLocation();
+            int distToTarget = here.distanceSquaredTo(targetLoc);
+
+            if (distToTarget <= FOCUS_ATTACK_DIST_SQ) {
+                // Calculate optimal cheese spend based on target HP and nearby allies
+                int alliesNearTarget = countAlliesNearTarget(rc, targetLoc, nearbyAllies);
+                int availableCheese = rc.getRawCheese() + Math.min(rc.getGlobalCheese() / 10, 30);
+                int cheeseToSpend = calculateOptimalCheeseSpend(
+                    priorityTarget.target.getHealth(), alliesNearTarget, availableCheese);
+
+                if (rc.canAttack(targetLoc, cheeseToSpend)) {
+                    rc.attack(targetLoc, cheeseToSpend);
+
+                    // Update focus target if this was our target
+                    if (m.focusTargetLoc == null || m.focusTargetLoc.distanceSquaredTo(targetLoc) <= 2) {
+                        m.focusTargetLoc = targetLoc;
+                        m.focusTargetRound = roundNum;
+                        m.focusTargetID = priorityTarget.target.getID();
+                        m.focusTargetHP = priorityTarget.target.getHealth() - (10 + (int)Math.ceil(Math.sqrt(cheeseToSpend)));
+                    }
+                }
+            }
+        }
+
         // === LOOK FOR ENEMY KING (using pre-sensed data) ===
         if (enemyKing != null) {
             m.targetKingLoc = enemyKing.getLocation();
@@ -243,10 +316,10 @@ public class BabyRatAttacker {
 
         // === STATE MACHINE ===
         switch (m.state) {
-            case SEEK:   runSeek(rc, m, roundNum, effectiveSymmetry, nearbyAllies); break;
-            case ATTACK: runAttack(rc, m, roundNum); break;
-            case GUARD:  runGuard(rc, m, roundNum); break;
-            case SWARM:  runSwarm(rc, m, roundNum); break;
+            case SEEK:   runSeek(rc, m, roundNum, effectiveSymmetry, nearbyAllies, priorityTarget); break;
+            case ATTACK: runAttack(rc, m, roundNum, nearbyAllies, priorityTarget); break;
+            case GUARD:  runGuard(rc, m, roundNum, nearbyAllies, priorityTarget); break;
+            case SWARM:  runSwarm(rc, m, roundNum, priorityTarget); break;
         }
 
         // Debug indicator
@@ -257,16 +330,14 @@ public class BabyRatAttacker {
                          ((m.localSymmetryEliminated & 2) != 0 ? "H" : "") +
                          ((m.localSymmetryEliminated & 4) != 0 ? "V" : "");
         String roleStr = m.isLeader ? "LEADER" : "FOLLOW";
-        int seqStr = m.latestFormationSeq >= 0 ? m.latestFormationSeq : (roundNum % FORMATION_SEQ_MODULO);
-        String stuckStr = m.stuckCooldown > 0 ? " CD:" + m.stuckCooldown : "";
         String catBandStr = m.turnCatBand == CAT_BAND_PANIC ? "PANIC" :
                             m.turnCatBand == CAT_BAND_DANGER ? "DANGER" :
                             m.turnCatBand == CAT_BAND_CAUTION ? "CAUTION" : "-";
         String catDistStr = nearestCatAnyLoc != null ? String.valueOf(nearestCatAnyDistSq) : "-";
-        String catCommStr = m.broadcastedCat ? "TX" : (m.adoptedCatLoc ? "RX" : "");
-        rc.setIndicatorString(roleStr + " | " + m.state + " | Cat:" + catBandStr + "(" + catDistStr + ")" +
-                (catCommStr.isEmpty() ? "" : catCommStr) +
-                " | Sym:" + symStr + elimStr + " | Tgt:" + (m.currentTarget != null ? m.currentTarget : "none"));
+        String focusStr = priorityTarget != null ? priorityTarget.reason + "(" + priorityTarget.target.getHealth() + ")" : "-";
+        rc.setIndicatorString(roleStr + " | " + m.state + " | Focus:" + focusStr +
+                " | Cat:" + catBandStr + "(" + catDistStr + ")" +
+                " | Sym:" + symStr + elimStr);
     }
 
     // ==================== SYMMETRY HELPERS ====================
@@ -492,26 +563,28 @@ public class BabyRatAttacker {
     // ==================== STATE IMPLEMENTATIONS ====================
 
     static void runSeek(RobotController rc, Mem m, int roundNum, int effectiveSymmetry,
-                        RobotInfo[] nearbyAllies) throws GameActionException {
+                        RobotInfo[] nearbyAllies, TargetResult priorityTarget) throws GameActionException {
         MapLocation here = rc.getLocation();
 
-        // === OPPORTUNISTIC ATTACK: Hit adjacent enemy rats while seeking ===
-        RobotInfo[] adjacentEnemies = rc.senseNearbyRobots(2, rc.getTeam().opponent());
-        for (RobotInfo enemy : adjacentEnemies) {
-            if (enemy.getType() == UnitType.BABY_RAT) {
-                int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-                if (rc.canAttack(enemy.getLocation(), spend)) {
-                    rc.attack(enemy.getLocation(), spend);
-                    break;
-                }
-            }
-        }
+        // Attack is handled by the centralized targeting system before state machine
+        // If we have a priority target, move toward it (handled below via swarm or cluster movement)
 
         // If we have a swarm target, go there
         if (m.swarmTarget != null && roundNum - m.swarmStartRound < 30) {
             m.state = AttackStateEnum.SWARM;
-            runSwarm(rc, m, roundNum);
+            runSwarm(rc, m, roundNum, priorityTarget);
             return;
+        }
+
+        // If we have a focus target nearby, move toward it for the kill
+        if (priorityTarget != null && m.focusTargetLoc != null) {
+            int distToFocus = here.distanceSquaredTo(m.focusTargetLoc);
+            if (distToFocus <= 36 && distToFocus > FOCUS_ATTACK_DIST_SQ) {
+                // Close but not adjacent - move toward focus target
+                m.currentTarget = m.focusTargetLoc;
+                attackerMoveToward(rc, m, m.focusTargetLoc);
+                return;
+            }
         }
 
         // If we already know enemy king location, go there as a tight cluster
@@ -549,7 +622,8 @@ public class BabyRatAttacker {
         formationMoveCluster(rc, m, symmetryTarget, roundNum, nearbyAllies);
     }
 
-    static void runAttack(RobotController rc, Mem m, int roundNum) throws GameActionException {
+    static void runAttack(RobotController rc, Mem m, int roundNum, RobotInfo[] nearbyAllies,
+                          TargetResult priorityTarget) throws GameActionException {
         if (m.targetKingLoc == null) {
             m.state = AttackStateEnum.SEEK;
             return;
@@ -558,35 +632,8 @@ public class BabyRatAttacker {
         MapLocation here = rc.getLocation();
         MapLocation center = m.targetKingLoc;
 
-        // === COUNT NEARBY ALLIES FOR GANG-UP ===
-        int alliesNearby = countAlliesInRadius(rc, COORDINATED_ATTACK_RADIUS);
-        boolean shouldGangUp = alliesNearby >= GANG_UP_THRESHOLD;
-
-        // === TRY TO BITE ENEMY KING ===
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-                MapLocation tile = new MapLocation(center.x + dx, center.y + dy);
-                int spend = shouldGangUp ?
-                    Math.min(BITE_CHEESE_BOOST * 2, rc.getRawCheese() + rc.getGlobalCheese() / 10) :
-                    Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-                if (rc.canAttack(tile, spend)) {
-                    rc.attack(tile, spend);
-                    return;
-                }
-            }
-        }
-
-        // === ALSO ATTACK ENEMY BABY RATS ===
-        RobotInfo[] enemies = rc.senseNearbyRobots(8, rc.getTeam().opponent());
-        for (RobotInfo enemy : enemies) {
-            if (enemy.getType() == UnitType.BABY_RAT) {
-                int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-                if (rc.canAttack(enemy.getLocation(), spend)) {
-                    rc.attack(enemy.getLocation(), spend);
-                    return;
-                }
-            }
-        }
+        // Attack is handled by centralized targeting before state machine
+        // Here we just handle movement and trap placement
 
         // === PLACE OFFENSIVE TRAP ===
         if (rc.getActionCooldownTurns() < 10 &&
@@ -599,30 +646,19 @@ public class BabyRatAttacker {
 
         // === MOVE TOWARD TARGET AS TIGHT CLUSTER ===
         m.currentTarget = m.targetKingLoc;
-        RobotInfo[] nearbyAllies = rc.senseNearbyRobots(CLUSTER_SENSE_RADIUS_SQ, rc.getTeam());
         formationMoveCluster(rc, m, m.targetKingLoc, roundNum, nearbyAllies);
     }
 
-    static void runGuard(RobotController rc, Mem m, int roundNum) throws GameActionException {
+    static void runGuard(RobotController rc, Mem m, int roundNum, RobotInfo[] nearbyAllies,
+                         TargetResult priorityTarget) throws GameActionException {
         MapLocation here = rc.getLocation();
 
-        // Find and attack nearby enemy rats
-        RobotInfo[] enemies = rc.senseNearbyRobots(20, rc.getTeam().opponent());
-        RobotInfo closestEnemy = null;
-        int closestDist = Integer.MAX_VALUE;
-
-        for (RobotInfo enemy : enemies) {
-            if (enemy.getType() == UnitType.BABY_RAT) {
-                int dist = here.distanceSquaredTo(enemy.getLocation());
-                if (dist < closestDist) {
-                    closestDist = dist;
-                    closestEnemy = enemy;
-                }
-            }
-        }
+        // Attack is handled by centralized targeting before state machine
+        // Get closest enemy for movement purposes
+        RobotInfo closestEnemy = priorityTarget != null ? priorityTarget.target : null;
 
         if (closestEnemy != null) {
-            // Place defensive trap
+            // Place defensive trap between enemy and our king
             if (m.kingLocation != null &&
                 rc.getGlobalCheese() >= RAT_TRAP_COST + 50 &&
                 roundNum - m.lastTrapRound >= 10) {
@@ -636,15 +672,12 @@ public class BabyRatAttacker {
                 }
             }
 
-            // Attack the enemy
-            int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-            if (rc.canAttack(closestEnemy.getLocation(), spend)) {
-                rc.attack(closestEnemy.getLocation(), spend);
-                return;
+            // Move toward the priority target if not already adjacent
+            int distToEnemy = here.distanceSquaredTo(closestEnemy.getLocation());
+            if (distToEnemy > FOCUS_ATTACK_DIST_SQ) {
+                m.currentTarget = closestEnemy.getLocation();
+                attackerMoveToward(rc, m, closestEnemy.getLocation());
             }
-
-            m.currentTarget = closestEnemy.getLocation();
-            attackerMoveToward(rc, m, closestEnemy.getLocation());
             return;
         }
 
@@ -657,7 +690,7 @@ public class BabyRatAttacker {
         }
     }
 
-    static void runSwarm(RobotController rc, Mem m, int roundNum) throws GameActionException {
+    static void runSwarm(RobotController rc, Mem m, int roundNum, TargetResult priorityTarget) throws GameActionException {
         // Check if local swarm target has expired
         if (m.localSwarmTarget != null && roundNum > m.localSwarmUntilRound) {
             m.localSwarmTarget = null;
@@ -682,9 +715,9 @@ public class BabyRatAttacker {
         RobotInfo[] nearby = rc.senseNearbyRobots(SWARM_ENGAGE_RADIUS_SQ);
         int allyCount = 0;
         int enemyCount = 0;
-        RobotInfo closestEnemy = null;
+        RobotInfo closestEnemy = priorityTarget != null ? priorityTarget.target : null;
         RobotInfo enemyKing = null;
-        int closestEnemyDistSq = Integer.MAX_VALUE;
+        int closestEnemyDistSq = closestEnemy != null ? here.distanceSquaredTo(closestEnemy.getLocation()) : Integer.MAX_VALUE;
 
         for (RobotInfo r : nearby) {
             if (r.getTeam() == enemyTeam) {
@@ -692,11 +725,6 @@ public class BabyRatAttacker {
                     enemyKing = r;  // Priority target
                 } else if (r.getType() == UnitType.BABY_RAT) {
                     enemyCount++;
-                    int d = here.distanceSquaredTo(r.getLocation());
-                    if (d < closestEnemyDistSq) {
-                        closestEnemyDistSq = d;
-                        closestEnemy = r;
-                    }
                 }
             } else if (r.getTeam() == myTeam && r.getType() == UnitType.BABY_RAT) {
                 allyCount++;
@@ -721,17 +749,9 @@ public class BabyRatAttacker {
             return;
         }
 
-        // === ENGAGEMENT DECISION: Only fight if we have numbers ===
+        // Attack is handled by centralized targeting before state machine
+        // === ENGAGEMENT DECISION: Only move toward enemies if we have numbers ===
         boolean haveAdvantage = (allyCount >= enemyCount + 1) || enemyCount == 0;
-
-        if (haveAdvantage && closestEnemy != null && closestEnemyDistSq <= 8) {
-            // We have advantage - engage aggressively
-            int spend = Math.min(BITE_CHEESE_BOOST, rc.getRawCheese());
-            if (rc.canAttack(closestEnemy.getLocation(), spend)) {
-                rc.attack(closestEnemy.getLocation(), spend);
-            }
-        }
-        // If outnumbered and enemy is close, don't attack (conserve position)
 
         // === MOVEMENT: Spread toward rally, but kite if outnumbered ===
         Direction offsetDir = SWARM_OFFSETS[rc.getID() % 8];

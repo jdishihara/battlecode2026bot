@@ -2,22 +2,24 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.config.Constants.*;
-import static examplefuncsplayer.config.Shared.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.config.Shared.*;
 
 /**
  * Manages spawn phase logic for the Rat King.
  *
- * 50/50 SPLIT MODE: Role assignment is based on robot ID (even=attacker, odd=hauler).
- * This class tracks rat counts for spawn cost calculations.
+ * Phase 0: Initial Hauler Phase - spawn 30 haulers first
+ * Phase 2: Main Hauler Phase - spawn haulers continuously
+ * Phase 3: Attacker Wave Phase - spawn 8 attackers every 200 rounds, then back to Phase 2
  */
 public class SpawnPhaseManager {
 
     private static int lastEnemyCountUpdate = 0;
+    private static int lastAttackerWaveRound = 0;
+    private static final int ATTACKER_WAVE_INTERVAL = 200;
 
     /**
-     * Update spawn tracking - counts rats for spawn cost calculations.
-     * Role assignment is handled by RobotPlayer using ID-based 50/50 split.
+     * Update spawn phase based on spawn counts and cheese thresholds.
      * Should be called every turn by the Rat King.
      */
     public static void updateSpawnPhase(RobotController rc) throws GameActionException {
@@ -34,11 +36,39 @@ public class SpawnPhaseManager {
             lastEnemyCountUpdate = roundNum;
         }
 
-        // 50/50 MODE: Spawn phase not used for role assignment (ID-based split)
-        // Keep phase at 1 for compatibility with any code that reads it
+        // Read current phase and spawn counts
         int currentPhase = rc.readSharedArray(SPAWN_PHASE_INDEX);
-        if (currentPhase != 1) {
-            rc.writeSharedArray(SPAWN_PHASE_INDEX, 1);
+        int attackersSpawned = rc.readSharedArray(ATTACKERS_SPAWNED_INDEX);
+        int haulersSpawned = rc.readSharedArray(HAULERS_SPAWNED_INDEX);
+
+        switch (currentPhase) {
+            case 0: // Initial Hauler Phase
+                if (haulersSpawned >= INITIAL_HAULER_COUNT) {
+                    // Done with initial haulers, switch to main hauler phase
+                    rc.writeSharedArray(SPAWN_PHASE_INDEX, 2);
+                    lastAttackerWaveRound = roundNum; // Reset timer so first wave is 300 rounds from now
+                    System.out.println("PHASE SWITCH: Initial Hauler -> Main Hauler (haulers: " + haulersSpawned + ")");
+                }
+                break;
+
+            case 2: // Main Hauler Phase
+                // Check if 300 rounds have passed since last attacker wave
+                if (roundNum - lastAttackerWaveRound >= ATTACKER_WAVE_INTERVAL) {
+                    // Switch to attacker wave phase
+                    rc.writeSharedArray(SPAWN_PHASE_INDEX, 3);
+                    rc.writeSharedArray(ATTACKERS_SPAWNED_INDEX, 0);
+                    lastAttackerWaveRound = roundNum;
+                    System.out.println("PHASE SWITCH: Main Hauler -> Attacker Wave (round: " + roundNum + ")");
+                }
+                break;
+
+            case 3: // Attacker Wave Phase
+                if (attackersSpawned >= ATTACKER_WAVE_SIZE) {
+                    // Done with attacker wave, switch back to main hauler phase
+                    rc.writeSharedArray(SPAWN_PHASE_INDEX, 2);
+                    System.out.println("PHASE SWITCH: Attacker Wave -> Main Hauler (attackers spawned: " + attackersSpawned + ")");
+                }
+                break;
         }
     }
 
@@ -135,18 +165,18 @@ public class SpawnPhaseManager {
     }
 
     /**
-     * Check if we're in an attacker-spawning phase (phase 1 or 3).
+     * Check if we're in an attacker-spawning phase (phase 3).
      */
     public static boolean isAttackerPhase(RobotController rc) throws GameActionException {
         int phase = rc.readSharedArray(SPAWN_PHASE_INDEX);
-        return phase == 1 || phase == 3;
+        return phase == 3;
     }
 
     /**
-     * Check if we're still in initial phases (0 or 1).
+     * Check if we're still in initial phase (0).
      */
     public static boolean isInitialPhase(RobotController rc) throws GameActionException {
         int phase = rc.readSharedArray(SPAWN_PHASE_INDEX);
-        return phase == 0 || phase == 1;
+        return phase == 0;
     }
 }

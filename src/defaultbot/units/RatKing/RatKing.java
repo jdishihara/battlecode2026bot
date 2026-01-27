@@ -2,8 +2,8 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.config.Constants.*;
-import static examplefuncsplayer.config.Shared.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.config.Shared.*;
 
 /**
  * RatKing logic: spawns baby rats, broadcasts shared info, and evades cats.
@@ -23,6 +23,9 @@ public class RatKing {
         int globalCheese = rc.getGlobalCheese();
         int spawnCost = rc.getCurrentRatCost();
         int roundNum = rc.getRoundNum();
+
+        // ===== UPDATE SPAWN PHASE =====
+        SpawnPhaseManager.updateSpawnPhase(rc);
 
         // ===== INITIALIZE SYMMETRY TRACKING (first turn only) =====
         if (!KingRuntimeState.symmetryInitialized) {

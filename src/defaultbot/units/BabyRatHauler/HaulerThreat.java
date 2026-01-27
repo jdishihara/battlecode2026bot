@@ -2,11 +2,11 @@ package defaultbot.units.BabyRatHauler;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
-import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatInfo;
-import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatLevel;
+import defaultbot.units.BabyRatHauler.HaulerMemory.Mem;
+import defaultbot.units.BabyRatHauler.HaulerState.ThreatInfo;
+import defaultbot.units.BabyRatHauler.HaulerState.ThreatLevel;
 
-import static examplefuncsplayer.config.Constants.*;
+import static defaultbot.config.Constants.*;
 
 /**
  * Threat computation for hauler rats - handles cats and enemy rats.

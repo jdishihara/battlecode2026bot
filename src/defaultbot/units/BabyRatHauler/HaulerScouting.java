@@ -2,12 +2,12 @@ package defaultbot.units.BabyRatHauler;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
-import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatInfo;
+import defaultbot.units.BabyRatHauler.HaulerMemory.Mem;
+import defaultbot.units.BabyRatHauler.HaulerState.ThreatInfo;
 
-import static examplefuncsplayer.units.BabyRatHauler.HaulerNavigation.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerMovement.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerThreat.*;
+import static defaultbot.units.BabyRatHauler.HaulerNavigation.*;
+import static defaultbot.units.BabyRatHauler.HaulerMovement.*;
+import static defaultbot.units.BabyRatHauler.HaulerThreat.*;
 
 /**
  * Scouting behavior for hauler rats.

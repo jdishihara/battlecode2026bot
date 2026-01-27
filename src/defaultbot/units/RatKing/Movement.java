@@ -2,7 +2,8 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.config.Constants.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.config.Shared.*;
 
 /**
  * Movement and escape methods for the Rat King.
@@ -199,6 +200,18 @@ public class Movement {
                 MapLocation spawnLoc = new MapLocation(myLocation.x + dx, myLocation.y + dy);
                 if (rc.canBuildRat(spawnLoc)) {
                     rc.buildRat(spawnLoc);
+
+                    // Track spawn count based on current phase
+                    int phase = rc.readSharedArray(SPAWN_PHASE_INDEX);
+                    if (phase == 0 || phase == 2) {
+                        // Hauler phases
+                        int haulersSpawned = rc.readSharedArray(HAULERS_SPAWNED_INDEX);
+                        rc.writeSharedArray(HAULERS_SPAWNED_INDEX, haulersSpawned + 1);
+                    } else {
+                        // Attacker phases (1 and 3)
+                        int attackersSpawned = rc.readSharedArray(ATTACKERS_SPAWNED_INDEX);
+                        rc.writeSharedArray(ATTACKERS_SPAWNED_INDEX, attackersSpawned + 1);
+                    }
                     return;
                 }
             }

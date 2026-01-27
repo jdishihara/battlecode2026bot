@@ -74,8 +74,7 @@ public final class Shared {
     public static final int INITIAL_HAULER_COUNT = 30;    // Haulers to spawn first
     public static final int INITIAL_ATTACKER_COUNT = 30;  // Attackers to spawn after haulers
 
-    // Attacker wave settings
-    public static final int ATTACKER_WAVE_SIZE = 8;       // Number of attackers to spawn per wave
+    // Attacker wave settings (ATTACKER_WAVE_SIZE is in Constants.java)
 
     // Shared array indices for tracking
     public static final int ATTACKERS_SPAWNED_INDEX = 38; // Count of attackers spawned in current wave/phase
@@ -89,8 +88,23 @@ public final class Shared {
     public static final int DEFENSE_TARGET_ROUND = 36;    // Round when target was set (mod 1000)
     public static final int DEFENSE_ENEMIES_COUNT = 37;   // Count of enemies near king (for spawn decisions)
 
+    // ===== RAT KING UPGRADE COORDINATION =====
+    public static final int KING_COUNT_INDEX = 41;              // Current number of rat kings
+    public static final int LAST_KING_UPGRADE_ROUND = 42;       // Round when last king was created (mod 1000)
+    public static final int BABY_RAT_COUNT_INDEX = 43;          // Estimated baby rat count (updated by king)
+    public static final int CLUSTER_FOR_UPGRADE_FLAG = 44;      // 1 = rats should cluster for upgrade, 0 = normal
+    public static final int CLUSTER_X_INDEX = 45;               // X coord of cluster rally point
+    public static final int CLUSTER_Y_INDEX = 46;               // Y coord of cluster rally point
+    public static final int CLUSTER_ROUND_INDEX = 47;           // Round when clustering started (mod 1000)
+
+    // ===== ATTACKER WAVE SPAWNING =====
+    public static final int ATTACKER_WAVE_REMAINING = 48;       // Number of attackers left to spawn in current wave (0-8)
+    public static final int LAST_ATTACKER_WAVE_ROUND = 49;      // Round when last attacker wave was triggered (mod 1000)
+    public static final int TOTAL_HAULERS_SPAWNED = 50;         // Total haulers spawned (for wave trigger condition)
+    public static final int NEXT_SPAWN_ROLE = 51;               // Role for next spawn: 0 = hauler, 1 = attacker
+
     // ===== RESERVED FOR FUTURE USE =====
-    // Indices 38-63 available for expansion (23-28 used by ALERT system in Constants.java)
+    // Indices 51-63 available for expansion (23-28 used by ALERT system in Constants.java)
 
     // ===== SQUEAK MESSAGE ENCODING =====
     // Compact format: type (0-7, 3 bits) | x (0-63, 6 bits) | y (0-63, 6 bits)

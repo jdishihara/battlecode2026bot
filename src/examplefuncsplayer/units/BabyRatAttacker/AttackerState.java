@@ -69,6 +69,23 @@ public class AttackerState {
     public static final int CLUSTER_REGROUP_THRESHOLD = 2;   // Min allies adjacent before we prioritize regrouping
     public static final int CLUSTER_SENSE_RADIUS_SQ = 20;    // Radius to sense allies for clustering
 
+    // === FOCUS FIRE SYSTEM ===
+    // Coordinates attackers to focus on the same enemy target for quick kills
+    public static final int FOCUS_FIRE_TTL = 12;             // Rounds to keep focusing same target
+    public static final int FOCUS_SQUEAK_COOLDOWN = 6;       // Rounds between focus fire squeaks
+    public static final int FOCUS_LOW_HP_THRESHOLD = 45;     // HP threshold for "low HP" priority (one boosted bite range)
+    public static final int FOCUS_CRITICAL_HP = 25;          // HP threshold for "critical" priority (guaranteed kill)
+    public static final int FOCUS_RESPONSE_DIST_SQ = 36;     // Respond to focus squeaks within 6 tiles
+    public static final int FOCUS_ATTACK_DIST_SQ = 2;        // Must be adjacent to attack (distSq <= 2)
+
+    // Target priority scores (higher = more important to attack)
+    public static final int PRIORITY_CRITICAL_HP = 100;      // Enemy at critical HP - finish them!
+    public static final int PRIORITY_LOW_HP = 70;            // Enemy at low HP - high priority
+    public static final int PRIORITY_FOCUS_TARGET = 60;      // Target being focused by allies
+    public static final int PRIORITY_NEAR_OUR_KING = 50;     // Enemy threatening our king
+    public static final int PRIORITY_CLOSEST = 30;           // Closest enemy (base priority)
+    public static final int PRIORITY_ENEMY_KING = 80;        // Enemy rat king (high value target)
+
     /** Check if a squeak message is a formation message. */
     public static boolean isFormationMsg(int msg) {
         return msg >= FORMATION_BASE && msg < FORMATION_MAX;

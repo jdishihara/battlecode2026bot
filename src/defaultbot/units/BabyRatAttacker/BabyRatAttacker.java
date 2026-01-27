@@ -2,16 +2,16 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.Mem;
-import examplefuncsplayer.units.BabyRatAttacker.AttackerState.AttackStateEnum;
+import defaultbot.units.BabyRatAttacker.AttackerMemory.Mem;
+import defaultbot.units.BabyRatAttacker.AttackerState.AttackStateEnum;
 
-import static examplefuncsplayer.config.Constants.*;
-import static examplefuncsplayer.config.Shared.*;
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.mem;
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerMovement.*;
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerCommunication.*;
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerFormation.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.config.Shared.*;
+import static defaultbot.units.BabyRatAttacker.AttackerState.*;
+import static defaultbot.units.BabyRatAttacker.AttackerMemory.mem;
+import static defaultbot.units.BabyRatAttacker.AttackerMovement.*;
+import static defaultbot.units.BabyRatAttacker.AttackerCommunication.*;
+import static defaultbot.units.BabyRatAttacker.AttackerFormation.*;
 
 /**
  * ATTACKER baby rat: CLUSTERED SYMMETRY SEARCH
@@ -333,8 +333,9 @@ public class BabyRatAttacker {
      * Try to eliminate the current symmetry if we can prove it's wrong.
      * FIX: Now takes effectiveSymmetry as parameter instead of reading globalSymmetry.
      *
-     * AGGRESSIVE ELIMINATION: We want rats to check locations quickly and move on.
-     * If we've been near a location for a while without finding the king, eliminate it.
+     * STRICT ELIMINATION: Rats must get VERY close (adjacent or nearly adjacent)
+     * to the predicted king location before eliminating. This ensures they travel
+     * all the way to corners if needed.
      */
     static void tryEliminateCurrentSymmetry(RobotController rc, Mem m, int effectiveSymmetry, int roundNum)
             throws GameActionException {
@@ -353,8 +354,10 @@ public class BabyRatAttacker {
         String reason = "";
 
         // === CONDITION 1: Predicted location is too close to boundary for 3x3 king ===
+        // Check this first since it doesn't require being close
         int w = rc.getMapWidth();
         int h = rc.getMapHeight();
+        // King center must be at least 1 tile from edge (king is 3x3)
         if (predicted.x < 1 || predicted.x >= w - 1 ||
             predicted.y < 1 || predicted.y >= h - 1) {
             shouldEliminate = true;
@@ -362,6 +365,7 @@ public class BabyRatAttacker {
         }
 
         // === CONDITION 2: Predicted center is blocked by wall ===
+        // Can check from distance if we can sense it
         if (!shouldEliminate && rc.canSenseLocation(predicted)) {
             MapInfo info = rc.senseMapInfo(predicted);
             if (info.isWall()) {
@@ -370,13 +374,46 @@ public class BabyRatAttacker {
             }
         }
 
-        // === CONDITION 3: Mark as reached when within 5 tiles (distSq <= 25) ===
-        if (distToPredicted <= 25) {
+        // === CONDITION 3: STRICT - Must be VERY close to eliminate ===
+        // Only eliminate if we're within 2 tiles (distSq <= 8) of the predicted CENTER
+        // This ensures rats go ALL THE WAY to corners
+        if (!shouldEliminate && distToPredicted <= 8) {
             m.reachedCurrentTarget = true;
+
+            // We're right next to where the king should be - check thoroughly
+            boolean foundEnemyKing = false;
+            int tilesChecked = 0;
+
+            // Check the entire 3x3 area where king would be
+            for (int dx = -1; dx <= 1 && !foundEnemyKing; dx++) {
+                for (int dy = -1; dy <= 1 && !foundEnemyKing; dy++) {
+                    MapLocation checkLoc = new MapLocation(predicted.x + dx, predicted.y + dy);
+                    if (rc.canSenseLocation(checkLoc)) {
+                        tilesChecked++;
+                        RobotInfo robot = rc.senseRobotAtLocation(checkLoc);
+                        if (robot != null &&
+                            robot.getType() == UnitType.RAT_KING &&
+                            robot.getTeam() == rc.getTeam().opponent()) {
+                            foundEnemyKing = true;
+                        }
+                    }
+                }
+            }
+
+            // Must have checked ALL 9 tiles of the 3x3 area to be sure
+            if (!foundEnemyKing && tilesChecked >= 9) {
+                shouldEliminate = true;
+                reason = "confirmed_empty";
+            }
+            // If we checked at least 6 tiles and we're adjacent, that's good enough
+            else if (!foundEnemyKing && tilesChecked >= 6 && distToPredicted <= 2) {
+                shouldEliminate = true;
+                reason = "adjacent_empty";
+            }
         }
 
-        // === CONDITION 4: Visual confirmation - can we see the predicted area is empty? ===
-        if (!shouldEliminate && distToPredicted <= 20) {
+        // === CONDITION 4: We're close (within 4 tiles) and can see the ENTIRE 3x3 area is empty ===
+        if (!shouldEliminate && distToPredicted <= 16) {
             boolean foundKing = false;
             int tilesChecked = 0;
 
@@ -395,35 +432,29 @@ public class BabyRatAttacker {
                 }
             }
 
-            // Eliminate if we can see most of the 3x3 area and no king
-            if (!foundKing && tilesChecked >= 5) {
+            // Only eliminate if we checked ALL 9 tiles
+            if (!foundKing && tilesChecked >= 9) {
                 shouldEliminate = true;
-                reason = "visual_confirm";
+                reason = "visual_confirm_all9";
                 m.reachedCurrentTarget = true;
             }
         }
 
-        // === CONDITION 5: Proximity timeout - been close to target for a while ===
-        // If we've reached the target area and stayed for 15+ rounds, move on
-        if (!shouldEliminate && m.reachedCurrentTarget) {
-            // Count how long we've been near this target
-            if (distToPredicted <= 36) {  // Within 6 tiles
-                if (m.roundsSearchingCurrentSymmetry >= 15) {
-                    shouldEliminate = true;
-                    reason = "proximity_timeout";
-                }
-            } else if (m.roundsSearchingCurrentSymmetry >= 30) {
-                // Wandered away from target but still "reached" - shorter timeout
-                shouldEliminate = true;
-                reason = "reached_and_timeout";
-            }
-        }
+        // === CONDITION 5: Timeout - but ONLY if we've actually reached the target ===
+        // Much longer timeout, and require being close
+        int timeoutThreshold = SYMMETRY_SEARCH_TIMEOUT * 2; // Double the timeout
 
-        // === CONDITION 6: General timeout - been searching this symmetry too long ===
-        if (!shouldEliminate && m.roundsSearchingCurrentSymmetry >= SYMMETRY_SEARCH_TIMEOUT) {
-            // Even if we haven't reached the target, eventually move on
-            shouldEliminate = true;
-            reason = "general_timeout";
+        if (!shouldEliminate && m.roundsSearchingCurrentSymmetry > timeoutThreshold) {
+            // Only timeout-eliminate if we actually got close
+            if (m.reachedCurrentTarget && distToPredicted <= 16) {
+                shouldEliminate = true;
+                reason = "timeout_at_target";
+            }
+            // Or if we've been searching for a VERY long time and are reasonably close
+            else if (m.roundsSearchingCurrentSymmetry > timeoutThreshold * 2 && distToPredicted <= 50) {
+                shouldEliminate = true;
+                reason = "timeout_extended";
+            }
         }
 
         // === ELIMINATE THIS SYMMETRY ===
@@ -533,20 +564,22 @@ public class BabyRatAttacker {
         }
 
         int distToTarget = here.distanceSquaredTo(symmetryTarget);
-        m.currentTarget = symmetryTarget;
 
-        // Mark as reached when within 5 tiles (consistent with elimination check)
-        if (distToTarget <= 25) {
+        // No spread - all attackers converge on the same target as a tight group
+        MapLocation moveTarget = symmetryTarget;
+
+        m.currentTarget = moveTarget;
+
+        // Check if we've reached the target area (within 3 tiles)
+        if (distToTarget <= 9) {
             m.reachedCurrentTarget = true;
         }
 
         // Debug: show which symmetry we're actually heading to
-        String symName = effectiveSymmetry == SYM_ROTATIONAL ? "ROT" :
-                         effectiveSymmetry == SYM_HORIZONTAL ? "HOR" : "VER";
         rc.setIndicatorLine(here, symmetryTarget, 255, 255, 0); // Yellow line to target
 
-        // Use formation movement - leaders advance, followers follow
-        formationMoveCluster(rc, m, symmetryTarget, roundNum, nearbyAllies);
+        // Use tight cluster movement - stay adjacent to allies while advancing
+        formationMoveCluster(rc, m, moveTarget, roundNum, nearbyAllies);
     }
 
     static void runAttack(RobotController rc, Mem m, int roundNum) throws GameActionException {

@@ -12,10 +12,11 @@ import static examplefuncsplayer.config.Shared.*;
  * Thin dispatcher: routes each unit to its role file.
  * All constants/state machines live in config/ + units/.
  *
- * Spawning Logic: HAULERS FIRST
- * - First INITIAL_HAULER_COUNT baby rats become haulers
- * - Remaining baby rats become attackers
- * - Role is determined by spawn order (ID relative to King's ID)
+ * Spawning Logic: HAULERS with ATTACKER WAVES
+ * - Default: All baby rats become haulers
+ * - When wave conditions are met (round > 100, cheese > 300, haulers >= 40),
+ *   spawn 8 attackers as a wave with 100 round cooldown between waves
+ * - Role is determined by NEXT_SPAWN_ROLE set by king before spawn
  */
 public class RobotPlayer {
 
@@ -38,26 +39,12 @@ public class RobotPlayer {
                 } else if (type == UnitType.BABY_RAT) {
                     // Decide role on first turn only (role is permanent)
                     if (!roleDecided) {
-                        // Calculate spawn order based on ID difference from King
-                        int kingID = rc.readSharedArray(KING_ID_INDEX);
-                        int myIDMod = rc.getID() % 1000;
-
-                        // Calculate spawn order (handle wrap-around for mod 1000)
-                        int spawnOrder = myIDMod - kingID;
-                        if (spawnOrder < 0) spawnOrder += 1000;
-
-                        // Determine role based on spawn mode
-                        if (CURRENT_SPAWN_MODE == SPAWN_MODE_HAULERS_ONLY) {
-                            isAttacker = false;
-                        } else if (CURRENT_SPAWN_MODE == SPAWN_MODE_ATTACKERS_ONLY) {
-                            isAttacker = true;
-                        } else {
-                            // SPAWN_MODE_BALANCED: First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
-                            isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
-                        }
+                        // Read role assigned by king before this rat was spawned
+                        int assignedRole = rc.readSharedArray(NEXT_SPAWN_ROLE);
+                        isAttacker = (assignedRole == 1);
                         roleDecided = true;
 
-                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " mode:" + CURRENT_SPAWN_MODE + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
+                        System.out.println("ID:" + rc.getID() + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
                     }
 
                     if (isAttacker) {

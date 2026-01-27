@@ -12,10 +12,10 @@ import static defaultbot.config.Shared.*;
  * Thin dispatcher: routes each unit to its role file.
  * All constants/state machines live in config/ + units/.
  *
- * Spawning Logic: HAULERS FIRST
- * - First INITIAL_HAULER_COUNT baby rats become haulers
- * - Remaining baby rats become attackers
- * - Role is determined by spawn order (ID relative to King's ID)
+ * Spawning Logic:
+ * - Phase 0: Initial Hauler Phase - spawn 30 haulers first
+ * - Phase 2: Main Hauler Phase - spawn haulers continuously
+ * - Phase 3: Attacker Wave Phase - spawn 8 attackers every 300 rounds, then back to Phase 2
  */
 public class RobotPlayer {
 
@@ -38,26 +38,21 @@ public class RobotPlayer {
                 } else if (type == UnitType.BABY_RAT) {
                     // Decide role on first turn only (role is permanent)
                     if (!roleDecided) {
-                        // Calculate spawn order based on ID difference from King
-                        int kingID = rc.readSharedArray(KING_ID_INDEX);
-                        int myIDMod = rc.getID() % 1000;
+                        // Read spawn phase from shared array
+                        // Phase 0 = initial haulers, Phase 2 = main haulers, Phase 3 = attacker wave
+                        int spawnPhase = rc.readSharedArray(SPAWN_PHASE_INDEX);
 
-                        // Calculate spawn order (handle wrap-around for mod 1000)
-                        int spawnOrder = myIDMod - kingID;
-                        if (spawnOrder < 0) spawnOrder += 1000;
-
-                        // Determine role based on spawn mode
-                        if (CURRENT_SPAWN_MODE == SPAWN_MODE_HAULERS_ONLY) {
-                            isAttacker = false;
-                        } else if (CURRENT_SPAWN_MODE == SPAWN_MODE_ATTACKERS_ONLY) {
-                            isAttacker = true;
-                        } else {
-                            // SPAWN_MODE_BALANCED: First INITIAL_HAULER_COUNT rats are haulers, rest are attackers
-                            isAttacker = (spawnOrder > INITIAL_HAULER_COUNT);
-                        }
+                        // Attacker phase is 3; hauler phases are 0 and 2
+                        isAttacker = (spawnPhase == 3);
                         roleDecided = true;
 
-                        System.out.println("ID:" + rc.getID() + " spawnOrder:" + spawnOrder + " mode:" + CURRENT_SPAWN_MODE + " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
+                        // Debug output
+                        String phaseName = (spawnPhase == 0) ? "INIT_HAULER" :
+                                           (spawnPhase == 2) ? "MAIN_HAULER" :
+                                           (spawnPhase == 3) ? "ATCK_WAVE" : "UNKNOWN";
+                        System.out.println("ID:" + rc.getID() +
+                                " phase:" + phaseName +
+                                " role:" + (isAttacker ? "ATTACKER" : "HAULER"));
                     }
 
                     if (isAttacker) {

@@ -2,12 +2,12 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.Mem;
-import examplefuncsplayer.units.BabyRatAttacker.AttackerState.AttackStateEnum;
+import defaultbot.units.BabyRatAttacker.AttackerMemory.Mem;
+import defaultbot.units.BabyRatAttacker.AttackerState.AttackStateEnum;
 
-import static examplefuncsplayer.config.Constants.*;
-import static examplefuncsplayer.config.Shared.*;
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.config.Shared.*;
+import static defaultbot.units.BabyRatAttacker.AttackerState.*;
 
 /**
  * Squeak communication, global alerts, and message processing for attacker rats.

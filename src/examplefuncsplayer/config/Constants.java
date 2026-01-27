@@ -5,13 +5,13 @@ import battlecode.common.Direction;
 public final class Constants {
 
     // ===== DEBUG =====
-    public static final boolean DEBUG = false;
+    public static final boolean DEBUG = true;
 
     // ===== GENERAL GAMEPLAY =====
     public static final int INITIAL_RATS = 10;
     public static final int CARRY_LIMIT = 20;
     public static final int LOW_CHEESE_THRESHOLD = 1500;
-    public static final int CRITICAL_CHEESE_THRESHOLD = 300;
+    public static final int CRITICAL_CHEESE_THRESHOLD = 50;
     public static final int CAT_FLEE_RADIUS = 12;
     public static final int DELIVERY_RADIUS = 1;
     public static final int SPAWN_INTERVAL = 6;
@@ -54,6 +54,13 @@ public final class Constants {
     public static final int OFFENSIVE_TRAP_CHEESE_THRESHOLD = 50; // Min cheese reserve for offensive traps
     public static final int HAULER_SPAWN_INTERVAL = 14;         // Slower spawn rate for ongoing hauler spawns
 
+    // ===== ATTACKER WAVE SYSTEM =====
+    public static final int ATTACKER_WAVE_MIN_ROUND = 100;      // Minimum round before spawning attacker waves
+    public static final int ATTACKER_WAVE_MIN_CHEESE = 300;     // Minimum cheese to trigger attacker wave
+    public static final int ATTACKER_WAVE_MIN_HAULERS = 40;     // Minimum haulers spawned before attacker waves
+    public static final int ATTACKER_WAVE_COOLDOWN = 150;       // Minimum rounds between attacker waves
+    public static final int ATTACKER_WAVE_SIZE = 6;             // Number of attackers per wave
+
     // ===== SQUEAK CHAIN DEFENSE SYSTEM =====
     public static final int STICKY_TARGET_ROUNDS = 10;          // Stay committed to target for N rounds
     public static final int SQUEAK_FRESHNESS_LIMIT = 2;         // Ignore squeaks older than 2 rounds
@@ -78,6 +85,16 @@ public final class Constants {
     public static final int RAT_TRAP_DAMAGE = 50;             // From spec
     public static final int GANG_UP_THRESHOLD = 3;            // Attack if 3+ allies nearby
     public static final int COORDINATED_ATTACK_RADIUS = 16;   // Check for allies in this radius
+
+    // ===== RAT KING UPGRADE SYSTEM =====
+    public static final int KING_UPGRADE_CHEESE_THRESHOLD = 3000;  // Min global cheese to consider upgrading
+    public static final int KING_UPGRADE_RAT_THRESHOLD = 20;       // Min baby rats NEARBY (king's vision) to upgrade
+    public static final int MAX_DESIRED_KINGS = 5;                 // Max rat kings to create
+    public static final int KING_UPGRADE_SAFE_DIST_SQ = 400;       // Min distance² from threats to upgrade (20 tiles)
+    public static final int KING_UPGRADE_COOLDOWN_ROUNDS = 100;    // Min rounds between king upgrades
+    public static final int CLUSTER_RATS_NEEDED = 8;               // Number of rats to send to cluster (7 needed + 1 extra)
+    public static final int CLUSTER_TIMEOUT_ROUNDS = 50;           // Max rounds to attempt clustering before giving up
+    public static final int CLUSTER_RADIUS_SQ = 9;                 // Rats within 3 tiles of cluster point participate
 
     // ===== CLUSTERED SYMMETRY SEARCH (NEW) =====
     public static final int SYMMETRY_SEARCH_TIMEOUT = 50;     // Rounds before switching symmetry (was 80)

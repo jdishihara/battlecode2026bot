@@ -2,10 +2,10 @@ package defaultbot.units.BabyRatHauler;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
+import defaultbot.units.BabyRatHauler.HaulerMemory.Mem;
 
-import static examplefuncsplayer.config.Constants.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerMovement.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.units.BabyRatHauler.HaulerMovement.*;
 
 /**
  * Navigation, stuck detection, and exploration targeting for hauler rats.

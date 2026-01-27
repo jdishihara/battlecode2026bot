@@ -2,10 +2,10 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.Mem;
+import defaultbot.units.BabyRatAttacker.AttackerMemory.Mem;
 
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerMovement.*;
+import static defaultbot.units.BabyRatAttacker.AttackerState.*;
+import static defaultbot.units.BabyRatAttacker.AttackerMovement.*;
 
 import java.util.Arrays;
 
@@ -295,61 +295,38 @@ public class AttackerFormation {
     // ==================== TIGHT SWARM CLUSTERING ====================
 
     /**
-     * Score a potential move location based on cluster cohesion AND objective progress.
-     * When far from objective, prioritize advancement. When close, prioritize clustering.
+     * Score a potential move location based on cluster cohesion.
+     * Higher score = better for maintaining tight formation.
      *
      * @param loc The location to score
      * @param allyLocs Array of nearby ally locations
      * @param objectiveLoc The target we're moving toward
-     * @param currentLoc Current location (for distance comparison)
      * @return Score for this location (higher = better)
      */
-    public static int scoreClusterPosition(MapLocation loc, MapLocation[] allyLocs, MapLocation objectiveLoc,
-                                           MapLocation currentLoc) {
+    public static int scoreClusterPosition(MapLocation loc, MapLocation[] allyLocs, MapLocation objectiveLoc) {
         int score = 0;
 
-        int currentDistToObj = currentLoc.distanceSquaredTo(objectiveLoc);
-        int nextDistToObj = loc.distanceSquaredTo(objectiveLoc);
-
-        // Determine how much to prioritize advancement vs clustering based on distance
-        // Far from target (>100 distSq, ~10 tiles): prioritize advancement
-        // Close to target: prioritize clustering for combat
-        boolean prioritizeAdvancement = currentDistToObj > 100;
-
-        // Score based on ally proximity (reduced when far from objective)
-        int adjacencyBonus = prioritizeAdvancement ? 30 : CLUSTER_ADJACENCY_BONUS;
-        int nearBonus = prioritizeAdvancement ? 10 : CLUSTER_NEAR_BONUS;
-
+        // Score based on ally proximity
         for (MapLocation allyLoc : allyLocs) {
             if (allyLoc == null) continue;
             int distSq = loc.distanceSquaredTo(allyLoc);
             if (distSq <= 2) {
-                score += adjacencyBonus;
+                // Adjacent ally (including diagonal) - highest bonus
+                score += CLUSTER_ADJACENCY_BONUS;
             } else if (distSq <= CLUSTER_MAX_SPREAD_SQ) {
-                score += nearBonus;
+                // Within ~2.8 tiles - moderate bonus
+                score += CLUSTER_NEAR_BONUS;
             }
         }
 
-        // Score for moving toward objective - much higher when far away
+        // Small bonus for moving toward objective (so we still make progress)
         if (objectiveLoc != null) {
-            int progressBonus = currentDistToObj - nextDistToObj;  // Positive if moving closer
-
-            if (prioritizeAdvancement) {
-                // Far from target: heavily reward progress
-                score += progressBonus * 15;  // Each unit closer = 15 points
-            } else {
-                // Close to target: still reward progress but less
-                score += progressBonus * 5;
-            }
+            int distToObj = loc.distanceSquaredTo(objectiveLoc);
+            // Give up to 20 points for being closer to objective
+            score += Math.max(0, 20 - (distToObj / 10));
         }
 
         return score;
-    }
-
-    /** Backward-compatible overload */
-    public static int scoreClusterPosition(MapLocation loc, MapLocation[] allyLocs, MapLocation objectiveLoc) {
-        // When no current location provided, assume we're at a reasonable distance
-        return scoreClusterPosition(loc, allyLocs, objectiveLoc, loc);
     }
 
     /**
@@ -386,8 +363,8 @@ public class AttackerFormation {
 
     /**
      * Cluster-aware movement toward objective.
-     * When far from objective, prioritizes advancement.
-     * When close, prioritizes staying with allies for combat.
+     * Prioritizes staying adjacent to allies while making progress toward target.
+     * ALWAYS mines through dirt in the desired direction.
      *
      * @param rc RobotController
      * @param m Memory state
@@ -398,14 +375,25 @@ public class AttackerFormation {
     public static boolean clusterMoveToward(RobotController rc, Mem m, MapLocation objectiveLoc,
                                             RobotInfo[] nearbyAllies) throws GameActionException {
         MapLocation here = rc.getLocation();
-        int distToObjective = here.distanceSquaredTo(objectiveLoc);
+
+        // ALWAYS dig through dirt in the desired direction first - highest priority for attackers
+        Direction desiredDir = here.directionTo(objectiveLoc);
+        if (desiredDir != Direction.CENTER) {
+            MapLocation desiredNext = here.add(desiredDir);
+            if (rc.canSenseLocation(desiredNext)) {
+                MapInfo desiredInfo = rc.senseMapInfo(desiredNext);
+                if (desiredInfo.isDirt() && rc.canRemoveDirt(desiredNext)) {
+                    rc.removeDirt(desiredNext);
+                    // Continue - we dug the dirt, now try to move or we'll move next turn
+                }
+            }
+        }
 
         // Count current adjacent allies
         int currentAdjacent = countAdjacentAllies(here, nearbyAllies);
 
-        // If we're far from objective, don't bother regrouping - just advance
-        // Only regroup if we're close to the target AND have few allies
-        boolean shouldRegroup = (distToObjective <= 100) && (currentAdjacent < CLUSTER_REGROUP_THRESHOLD);
+        // If we have few adjacent allies, prioritize regrouping
+        boolean shouldRegroup = currentAdjacent < CLUSTER_REGROUP_THRESHOLD;
 
         // Get ally locations for scoring
         MapLocation[] allyLocs = new MapLocation[nearbyAllies.length];
@@ -438,18 +426,24 @@ public class AttackerFormation {
             MapInfo info = rc.senseMapInfo(next);
             if (info.isWall()) continue;
 
+            // Also dig dirt in alternative directions if we can
+            if (info.isDirt() && rc.canRemoveDirt(next)) {
+                rc.removeDirt(next);
+                // Mark this as a potential move for next turn
+            }
+
             // Anti-oscillation check
             if ((m.prev1 != null && next.equals(m.prev1)) || (m.prev2 != null && next.equals(m.prev2))) {
                 continue;
             }
 
-            // Score this position (pass current location for distance-based scoring)
-            int score = scoreClusterPosition(next, allyLocs, objectiveLoc, here);
+            // Score this position
+            int score = scoreClusterPosition(next, allyLocs, objectiveLoc);
 
-            // Extra advancement bonus when not regrouping
+            // Bonus for moving in the advance direction (if not regrouping)
             if (!shouldRegroup) {
-                if (dir == advanceDir) score += 20;
-                else if (dir == advanceDir.rotateLeft() || dir == advanceDir.rotateRight()) score += 12;
+                if (dir == advanceDir) score += 15;
+                else if (dir == advanceDir.rotateLeft() || dir == advanceDir.rotateRight()) score += 10;
             }
 
             if (score > bestScore) {
@@ -458,7 +452,7 @@ public class AttackerFormation {
             }
         }
 
-        // If no valid direction found, try standard movement (which has bug navigation)
+        // If no valid direction found, try standard movement
         if (bestDir == null) {
             return attackerMoveToward(rc, m, objectiveLoc);
         }
@@ -475,19 +469,16 @@ public class AttackerFormation {
             return true;
         }
 
-        // If scoring found a direction but can't move there, fall back to bug nav
-        return attackerMoveToward(rc, m, objectiveLoc);
+        return false;
     }
 
     /**
      * Formation move that uses tight clustering.
      * Leaders move toward objective, followers cluster around them.
-     * When far from objective, prioritizes advancement over clustering.
      */
     public static boolean formationMoveCluster(RobotController rc, Mem m, MapLocation objectiveLoc,
                                                int roundNum, RobotInfo[] nearbyAllies) throws GameActionException {
         MapLocation here = rc.getLocation();
-        int distToObjective = here.distanceSquaredTo(objectiveLoc);
 
         // Decrement stuck cooldown each turn
         if (m.stuckCooldown > 0) {
@@ -497,22 +488,12 @@ public class AttackerFormation {
         // Count adjacent allies
         int adjacentAllies = countAdjacentAllies(here, nearbyAllies);
 
-        // Determine if we should prioritize advancement over clustering
-        // Far from objective (>100 distSq, ~10 tiles): prioritize advancement
-        boolean farFromObjective = distToObjective > 100;
-
         // === LEADER BEHAVIOR ===
         if (amILeader(rc, m, objectiveLoc, nearbyAllies)) {
             m.isLeader = true;
 
-            boolean moved;
-            if (farFromObjective) {
-                // Far from objective: use direct movement, don't wait for cluster
-                moved = attackerMoveToward(rc, m, objectiveLoc);
-            } else {
-                // Close to objective: use cluster movement for combat readiness
-                moved = clusterMoveToward(rc, m, objectiveLoc, nearbyAllies);
-            }
+            // Leaders use cluster movement - advances but stays with group
+            boolean moved = clusterMoveToward(rc, m, objectiveLoc, nearbyAllies);
 
             // Track stuck status
             if (moved) {
@@ -535,17 +516,10 @@ public class AttackerFormation {
             return moved;
         }
 
-        // === FOLLOWER BEHAVIOR ===
+        // === FOLLOWER BEHAVIOR: Cluster around nearest ally or leader ===
         m.isLeader = false;
         m.leaderStuckCount = 0;
 
-        // When far from objective, followers also prioritize advancement
-        if (farFromObjective) {
-            // Just move toward objective, clustering is less important
-            return clusterMoveToward(rc, m, objectiveLoc, nearbyAllies);
-        }
-
-        // Close to objective: cluster for combat
         // If we have few adjacent allies, prioritize getting adjacent to someone
         if (adjacentAllies < CLUSTER_REGROUP_THRESHOLD) {
             // Find nearest ally and move adjacent to them
@@ -561,8 +535,8 @@ public class AttackerFormation {
                 }
             }
 
-            if (nearestAlly != null && nearestDist > 2) {
-                // Only regroup if ally is more than 1 tile away
+            if (nearestAlly != null) {
+                // Move to get adjacent to nearest ally
                 return moveAdjacentToSource(rc, m, nearestAlly.getLocation(), objectiveLoc, roundNum);
             }
         }

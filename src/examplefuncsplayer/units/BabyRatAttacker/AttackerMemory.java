@@ -77,6 +77,13 @@ public class AttackerMemory {
         public boolean reachedCurrentTarget = false;        // Have we arrived at current symmetry target?
         public int roundsSearchingCurrentSymmetry = 0;      // How long we've searched current symmetry
 
+        // === FOCUS FIRE SYSTEM ===
+        public MapLocation focusTargetLoc = null;           // Current focus fire target location
+        public int focusTargetHP = 0;                       // Target's HP when acquired (for priority updates)
+        public int focusTargetRound = -100;                 // Round when target was set
+        public int focusTargetID = -1;                      // Target's robot ID (to verify it's same enemy)
+        public int lastFocusSqueakRound = -100;             // Cooldown for broadcasting focus target
+
         public final Random rng;
 
         public Mem(int id) {

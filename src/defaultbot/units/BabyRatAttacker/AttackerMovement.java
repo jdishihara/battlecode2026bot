@@ -2,9 +2,9 @@ package defaultbot.units.BabyRatAttacker;
 
 import battlecode.common.*;
 
-import examplefuncsplayer.units.BabyRatAttacker.AttackerMemory.Mem;
+import defaultbot.units.BabyRatAttacker.AttackerMemory.Mem;
 
-import static examplefuncsplayer.units.BabyRatAttacker.AttackerState.*;
+import static defaultbot.units.BabyRatAttacker.AttackerState.*;
 
 /**
  * Movement and flee functions for attacker rats.
@@ -15,17 +15,10 @@ public class AttackerMovement {
      * Flee from a cat location in PANIC mode.
      * Prioritizes moves that escape pounce range (distSq > 9).
      * Falls back to any move away if no safe escape exists.
-     * Now also places cat traps to slow the cat down.
      */
     public static void runAttackerFleeFrom(RobotController rc, Mem m, MapLocation catLoc) throws GameActionException {
         MapLocation here = rc.getLocation();
         Direction away = here.directionTo(catLoc).opposite();
-
-        // ===== PLACE CAT TRAP WHILE FLEEING =====
-        // Place a cat trap between us and the cat to slow it down
-        if (rc.getActionCooldownTurns() < 10 && rc.getGlobalCheese() >= 10) {
-            tryPlaceCatTrapWhileFleeing(rc, here, catLoc);
-        }
 
         // Build flee direction priority: away, then laterals, then diagonals
         Direction[] fleeDirs = {
@@ -226,6 +219,16 @@ public class AttackerMovement {
 
         MapLocation next = oldLoc.add(dir);
 
+        // ALWAYS dig through dirt first - this is the highest priority for attackers
+        // Do this BEFORE any other checks so we always clear our path
+        if (rc.canSenseLocation(next)) {
+            MapInfo info = rc.senseMapInfo(next);
+            if (info.isDirt() && rc.canRemoveDirt(next)) {
+                rc.removeDirt(next);
+                // Continue checking - we may be able to move after digging, or we'll move next turn
+            }
+        }
+
         // Anti-oscillation: reject moves to recent positions
         if ((m.prev1 != null && next.equals(m.prev1)) || (m.prev2 != null && next.equals(m.prev2))) {
             return false;
@@ -254,15 +257,6 @@ public class AttackerMovement {
             return true;
         }
 
-        // If blocked by dirt, dig it
-        if (rc.canSenseLocation(next)) {
-            MapInfo info = rc.senseMapInfo(next);
-            if (info.isDirt() && rc.canRemoveDirt(next)) {
-                rc.removeDirt(next);
-                return false;  // Didn't move, but dug the dirt - will move next turn
-            }
-        }
-
         return false;
     }
 
@@ -282,34 +276,5 @@ public class AttackerMovement {
             if (r.getType() == UnitType.BABY_RAT) count++;
         }
         return count;
-    }
-
-    /**
-     * Try to place a cat trap while fleeing from a cat.
-     * Places the trap in the cat's path (between us and the cat).
-     * Cat traps cost 10 cheese and deal 100 damage + 2 turn stun.
-     */
-    public static boolean tryPlaceCatTrapWhileFleeing(RobotController rc, MapLocation here, MapLocation catLoc)
-            throws GameActionException {
-        Direction toCat = here.directionTo(catLoc);
-        if (toCat == Direction.CENTER) return false;
-
-        // Try to place trap in the cat's approach path
-        // Priority: directly toward cat, then adjacent directions
-        Direction[] trapDirs = {
-            toCat,
-            toCat.rotateLeft(),
-            toCat.rotateRight()
-        };
-
-        for (Direction dir : trapDirs) {
-            MapLocation trapLoc = here.add(dir);
-            if (rc.canPlaceCatTrap(trapLoc)) {
-                rc.placeCatTrap(trapLoc);
-                return true;
-            }
-        }
-
-        return false;
     }
 }

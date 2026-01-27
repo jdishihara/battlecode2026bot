@@ -53,6 +53,7 @@ public final class Constants {
     public static final int MIN_ALLIES_FOR_DEFENSE = 2;         // Minimum allies needed to engage enemies
     public static final int OFFENSIVE_TRAP_CHEESE_THRESHOLD = 50; // Min cheese reserve for offensive traps
     public static final int HAULER_SPAWN_INTERVAL = 14;         // Slower spawn rate for ongoing hauler spawns
+    public static final int EMERGENCY_HAULER_SPAWN_INTERVAL = 50; // Spawn haulers periodically regardless of cheese
 
     // King mobility constants
     public static final int KING_KITE_SAFE_DIST_SQ = 144;      // 12 tiles - maintain this distance from threats

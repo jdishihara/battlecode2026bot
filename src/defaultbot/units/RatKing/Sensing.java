@@ -2,7 +2,7 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.config.Constants.*;
+import static defaultbot.config.Constants.*;
 
 /**
  * Sensing helper methods for the Rat King.

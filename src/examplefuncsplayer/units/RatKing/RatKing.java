@@ -32,6 +32,17 @@ public class RatKing {
             SymmetryManager.initializeSymmetryTracking(rc, roundNum);
             // Write King's ID so baby rats can calculate spawn order
             rc.writeSharedArray(KING_ID_INDEX, rc.getID() % 1000);
+
+            // If this is a newly upgraded king (not the starting king), record the upgrade round
+            // The starting king is created at round 1, so any king initializing after round 1
+            // is a newly upgraded king from a baby rat
+            if (roundNum > 1) {
+                rc.writeSharedArray(LAST_KING_UPGRADE_ROUND, roundNum % 1000);
+                // Increment king count
+                int prevKingCount = rc.readSharedArray(KING_COUNT_INDEX);
+                rc.writeSharedArray(KING_COUNT_INDEX, prevKingCount + 1);
+            }
+
             KingRuntimeState.symmetryInitialized = true;
         }
 
@@ -115,6 +126,55 @@ public class RatKing {
         rc.writeSharedArray(KING_X_INDEX, myLocation.x);
         rc.writeSharedArray(KING_Y_INDEX, myLocation.y);
         rc.writeSharedArray(CHEESE_STATE_INDEX, globalCheese < LOW_CHEESE_THRESHOLD ? 0 : 1);
+
+        // ===== BROADCAST KING AND RAT COUNTS FOR UPGRADE COORDINATION =====
+        // Count kings by sensing (we can also increment when a new king is detected)
+        int currentKingCount = rc.readSharedArray(KING_COUNT_INDEX);
+        if (currentKingCount == 0) {
+            // Initialize to 1 on first king's first turn
+            currentKingCount = 1;
+            rc.writeSharedArray(KING_COUNT_INDEX, 1);
+        }
+        // Note: KING_COUNT_INDEX is updated in initialization when a new king is created
+        int babyRatCount = Sensing.countAlliedBabyRatsNearKing(rc, 10000); // Large radius to count all
+        rc.writeSharedArray(BABY_RAT_COUNT_INDEX, babyRatCount);
+
+        // ===== CLUSTER FOR UPGRADE COORDINATION =====
+        // Check if we should signal rats to cluster for a new king
+        int lastUpgradeRound = rc.readSharedArray(LAST_KING_UPGRADE_ROUND);
+        int roundsSinceLastUpgrade = (lastUpgradeRound == 0) ? KING_UPGRADE_COOLDOWN_ROUNDS + 1 :
+            ((roundNum - lastUpgradeRound + 1000) % 1000);
+        if (roundsSinceLastUpgrade > 500) roundsSinceLastUpgrade = KING_UPGRADE_COOLDOWN_ROUNDS + 1;
+
+        // Only cluster if threats aren't too close (use ALERT radius, not just presence)
+        boolean catTooCloseForCluster = (catDistSq <= ALERT_RADIUS * ALERT_RADIUS);
+        boolean enemyTooCloseForCluster = (enemyRatDistSq <= 100);  // ~10 tiles
+
+        boolean shouldCluster = currentKingCount < MAX_DESIRED_KINGS
+            && globalCheese >= KING_UPGRADE_CHEESE_THRESHOLD
+            && babyRatCount >= KING_UPGRADE_RAT_THRESHOLD
+            && roundsSinceLastUpgrade >= KING_UPGRADE_COOLDOWN_ROUNDS
+            && !catTooCloseForCluster
+            && !enemyTooCloseForCluster;
+
+        int currentClusterFlag = rc.readSharedArray(CLUSTER_FOR_UPGRADE_FLAG);
+        int clusterStartRound = rc.readSharedArray(CLUSTER_ROUND_INDEX);
+        int clusterAge = (clusterStartRound == 0) ? 0 : ((roundNum - clusterStartRound + 1000) % 1000);
+        if (clusterAge > 500) clusterAge = CLUSTER_TIMEOUT_ROUNDS + 1;
+
+        if (shouldCluster && currentClusterFlag == 0) {
+            // Start clustering - set rally point near king but offset to avoid blocking
+            rc.writeSharedArray(CLUSTER_FOR_UPGRADE_FLAG, 1);
+            rc.writeSharedArray(CLUSTER_X_INDEX, myLocation.x);
+            rc.writeSharedArray(CLUSTER_Y_INDEX, myLocation.y);
+            rc.writeSharedArray(CLUSTER_ROUND_INDEX, roundNum % 1000);
+        } else if (currentClusterFlag == 1 && clusterAge > CLUSTER_TIMEOUT_ROUNDS) {
+            // Clustering timed out - reset
+            rc.writeSharedArray(CLUSTER_FOR_UPGRADE_FLAG, 0);
+        } else if (!shouldCluster && currentClusterFlag == 1) {
+            // Conditions no longer met (threat appeared, etc) - cancel clustering
+            rc.writeSharedArray(CLUSTER_FOR_UPGRADE_FLAG, 0);
+        }
 
         int dangerValue;
         switch (KingRuntimeState.kingState) {

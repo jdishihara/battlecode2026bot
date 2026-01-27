@@ -53,25 +53,15 @@ public final class Shared {
 
     // ===== SPAWN PHASE TRACKING =====
     // Phase 0: Initial Hauler Phase - spawn 30 haulers first
-    // Phase 1: Initial Attacker Phase - spawn 30 attackers
-    // Phase 2: Main Hauler Phase - spawn haulers continuously, check attacker threshold
-    // Phase 3: Attacker Wave Phase - spawn 8 attackers, then back to Phase 2
+    // Phase 2: Main Hauler Phase - spawn haulers continuously
+    // Phase 3: Attacker Wave Phase - spawn 8 attackers every 200 rounds, then back to Phase 2
     public static final int SPAWN_PHASE_INDEX = 30;       // 0-3 for different phases
     public static final int ENEMY_RAT_COUNT_INDEX = 31;   // Estimated enemy rat count from sightings
     public static final int OUR_RAT_COUNT_INDEX = 32;     // Our baby rat count estimate
     public static final int KING_RESERVE = 300;           // Cheese reserve for king safety
 
-    // ===== SPAWN MODE CONFIGURATION =====
-    // Change CURRENT_SPAWN_MODE to switch between spawning strategies
-    public static final int SPAWN_MODE_BALANCED = 0;      // Normal: INITIAL_HAULER_COUNT haulers, then attackers
-    public static final int SPAWN_MODE_HAULERS_ONLY = 1;  // All rats become haulers
-    public static final int SPAWN_MODE_ATTACKERS_ONLY = 2; // All rats become attackers
-
-    public static final int CURRENT_SPAWN_MODE = SPAWN_MODE_HAULERS_ONLY;  // <-- CHANGE THIS TO SWITCH MODES
-
-    // Initial spawn counts (used when SPAWN_MODE_BALANCED)
+    // Initial spawn counts
     public static final int INITIAL_HAULER_COUNT = 30;    // Haulers to spawn first
-    public static final int INITIAL_ATTACKER_COUNT = 30;  // Attackers to spawn after haulers
 
     // Attacker wave settings
     public static final int ATTACKER_WAVE_SIZE = 8;       // Number of attackers to spawn per wave

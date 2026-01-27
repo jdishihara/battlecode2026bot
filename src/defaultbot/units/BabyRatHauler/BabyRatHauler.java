@@ -2,22 +2,22 @@ package defaultbot.units.BabyRatHauler;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.config.Constants.*;
-import static examplefuncsplayer.config.Shared.*;
+import static defaultbot.config.Constants.*;
+import static defaultbot.config.Shared.*;
 
-import examplefuncsplayer.units.BabyRatHauler.HaulerMemory.Mem;
-import examplefuncsplayer.units.BabyRatHauler.HaulerState.RatState;
-import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatInfo;
-import examplefuncsplayer.units.BabyRatHauler.HaulerState.ThreatLevel;
+import defaultbot.units.BabyRatHauler.HaulerMemory.Mem;
+import defaultbot.units.BabyRatHauler.HaulerState.RatState;
+import defaultbot.units.BabyRatHauler.HaulerState.ThreatInfo;
+import defaultbot.units.BabyRatHauler.HaulerState.ThreatLevel;
 
-import static examplefuncsplayer.units.BabyRatHauler.HaulerMemory.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerMining.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerThreat.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerMovement.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerNavigation.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerSensing.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerScouting.*;
-import static examplefuncsplayer.units.BabyRatHauler.HaulerDefense.*;
+import static defaultbot.units.BabyRatHauler.HaulerMemory.*;
+import static defaultbot.units.BabyRatHauler.HaulerMining.*;
+import static defaultbot.units.BabyRatHauler.HaulerThreat.*;
+import static defaultbot.units.BabyRatHauler.HaulerMovement.*;
+import static defaultbot.units.BabyRatHauler.HaulerNavigation.*;
+import static defaultbot.units.BabyRatHauler.HaulerSensing.*;
+import static defaultbot.units.BabyRatHauler.HaulerScouting.*;
+import static defaultbot.units.BabyRatHauler.HaulerDefense.*;
 
 /**
  * HAULER baby rat: cheese collection FSM + cat-aware safety + enemy rat awareness + early deposit.
@@ -485,17 +485,6 @@ public class BabyRatHauler {
         MapLocation here = rc.getLocation();
         MapLocation threatLoc = threat.source;
 
-        // ===== CAT TRAP PLACEMENT =====
-        // If fleeing from a cat, place a cat trap in its path to slow it down
-        if (rc.getActionCooldownTurns() < 10 && rc.getGlobalCheese() >= 10) {
-            if (rc.canSenseLocation(threatLoc)) {
-                RobotInfo threatRobot = rc.senseRobotAtLocation(threatLoc);
-                if (threatRobot != null && threatRobot.getType() == UnitType.CAT) {
-                    tryPlaceCatTrapWhileFleeing(rc, here, threatLoc);
-                }
-            }
-        }
-
         // ===== PARTING SHOT TRAP =====
         // Before fleeing, drop a trap where the enemy will chase into
         // Only do this against enemy rats (not cats) and if we have cheese
@@ -629,34 +618,5 @@ public class BabyRatHauler {
 
         if (DEBUG) rc.setIndicatorString("DEFEND | Enemies:" + threat.enemiesNearKing + " | Target:" +
                 (target != null ? target.toString() : "none") + " | Allies:" + alliesNearby);
-    }
-
-    /**
-     * Try to place a cat trap while fleeing from a cat.
-     * Places the trap in the cat's path (between us and the cat).
-     * Cat traps cost 10 cheese and deal 100 damage + 2 turn stun.
-     */
-    static boolean tryPlaceCatTrapWhileFleeing(RobotController rc, MapLocation here, MapLocation catLoc)
-            throws GameActionException {
-        Direction toCat = here.directionTo(catLoc);
-        if (toCat == Direction.CENTER) return false;
-
-        // Try to place trap in the cat's approach path
-        // Priority: directly toward cat, then adjacent directions
-        Direction[] trapDirs = {
-            toCat,
-            toCat.rotateLeft(),
-            toCat.rotateRight()
-        };
-
-        for (Direction dir : trapDirs) {
-            MapLocation trapLoc = here.add(dir);
-            if (rc.canPlaceCatTrap(trapLoc)) {
-                rc.placeCatTrap(trapLoc);
-                return true;
-            }
-        }
-
-        return false;
     }
 }

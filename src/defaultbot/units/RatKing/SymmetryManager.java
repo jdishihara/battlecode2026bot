@@ -2,7 +2,7 @@ package defaultbot.units.RatKing;
 
 import battlecode.common.*;
 
-import static examplefuncsplayer.config.Shared.*;
+import static defaultbot.config.Shared.*;
 
 /**
  * Symmetry tracking and management for the Rat King.
